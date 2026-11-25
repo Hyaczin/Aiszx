@@ -100,6 +100,9 @@ def svc(port, name=None, tunnel=None, product=None, method="probed", conf=10, pr
     (svc(514, "shell", product="Netkit rshd"), ["rservices"], "high"),
     (svc(2514, "shell"), ["other"], "low"),                                 # name alone is not enough
 ])
+def test_classification(classifier, record, categories, confidence):
+    c = classifier.classify(record)
+    assert (c.categories, c.confidence) == (categories, confidence)
 
 
 def test_script_summary():
@@ -109,9 +112,6 @@ def test_script_summary():
         "/: | PHPSESSID: | httponly flag not set"
     assert script_summary("Admin Login") == "Admin Login"
     assert script_summary("x" * 200).endswith("...") and len(script_summary("x" * 200)) == 110
-def test_classification(classifier, record, categories, confidence):
-    c = classifier.classify(record)
-    assert (c.categories, c.confidence) == (categories, confidence)
 
 
 def test_classifier_user_override(tmp_path):
