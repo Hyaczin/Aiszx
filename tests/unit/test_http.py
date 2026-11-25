@@ -232,4 +232,6 @@ def test_clip_list_at_item_boundary():
 
     techs = "Apache 2.4.52, Bootstrap, Cookies, HTTPServer, JQuery 3.6.0, PasswordField"
     assert _clip(techs, 100) == techs
-    assert _clip(techs, 60) == "Apache 2.4.52, Bootstrap, Cookies, HTTPServer, JQuery 3.6.0 …"
+    assert _clip(techs, 61) == "Apache 2.4.52, Bootstrap, Cookies, HTTPServer, JQuery 3.6.0 …"   # 61 chars: fits
+    assert _clip(techs, 60) == "Apache 2.4.52, Bootstrap, Cookies, HTTPServer …"                 # one less: drop item
+    assert all(len(_clip(techs, w)) <= w for w in range(10, 80))

@@ -33,8 +33,13 @@ def _clip(text: str, width: int) -> str:
     """Shorten a comma-separated list at an item boundary, marking the cut with '…'."""
     if len(text) <= width:
         return text
-    cut = text[: width - 1].rsplit(", ", 1)[0]
-    return cut + " …"
+    kept: list[str] = []
+    for item in text.split(", "):
+        candidate = ", ".join([*kept, item])
+        if len(candidate) + 2 > width:  # room for " …"
+            break
+        kept.append(item)
+    return ", ".join(kept) + " …" if kept else text[: width - 2] + " …"
 
 
 def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -> None:
