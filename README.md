@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 3 (Orchestrator) complete.** You can manage engagements, scope, targets and workspaces; inventory, check and install tools; and run modules with checkpoints, retries, crash recovery and resume. The only module so far is the built-in `core.connectivity` reachability check. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
+> **Status: Milestone 4 (Nmap reconnaissance) complete.** On top of engagements, scope, workspaces, tool management and the orchestrator (checkpoints, retries, crash recovery and resume), Aiszx now runs Nmap reconnaissance: host discovery, all-port TCP, service and version identification, UDP, and range discovery. It stores and classifies every discovered port and service. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
 
 ---
 
@@ -201,10 +201,61 @@ python3 pentest.py tools nmap-caps --apply  # one-time: lets nmap do SYN/UDP/OS 
 ```
 See [docs/TOOLS.md](docs/TOOLS.md) for detection rules, the install policy, the nmap capability trade-offs and how to add your own tools (including pyenv Python 2.7 tools).
 
+### Reconnaissance
+
+```bash
+python3 pentest.py -e htb-box-reset recon 10.129.73.247                    # standard profile
+python3 pentest.py -e htb-box-reset recon 10.129.73.247 --profile comprehensive
+python3 pentest.py -e htb-box-reset services 10.129.73.247                 # ports, versions, categories, NSE
+python3 pentest.py -e htb-lab discover 10.10.10.0/24 --register            # live hosts in an in-scope range
+```
+
+`recon` runs, in one run directory:
+
+| Stage | Module | What it does |
+|-------|--------|--------------|
+| preflight | `core.connectivity` | Route lookup (which interface, e.g. `tun0`) and ping. |
+| recon | `recon.host_discovery` | `nmap -sn` with the profile's probes. Informational only: port scans always use `-Pn`, because HTB and Windows hosts often drop ICMP. |
+| recon | `recon.tcp_ports` | All TCP ports by default: a SYN scan with raw sockets, or a connect scan without. **Resumable:** an interrupted scan continues with `nmap --resume` in a new attempt directory. |
+| recon | `recon.udp` | The top-N UDP ports, set by the profile. `open\|filtered` results are kept as *uncertain* and never counted as open. Needs raw sockets. |
+| recon | `recon.service_id` | `-sV` on the open TCP ports just found, plus `-sC` and optionally `-O` per profile. |
+
+Scan parameters come from the profile, never from code:
+
+| Profile | TCP | Scripts | Version | OS detection | UDP | Timing |
+|---------|-----|---------|---------|--------------|-----|--------|
+| `conservative` | top 1000 | no | default | no | none | `-T3` |
+| `standard` (default) | all | `-sC` | default | no | top 20 | `-T4 --min-rate 1000` |
+| `comprehensive` | all | `-sC` | `--version-all` | `-O` | top 100 | `-T4 --min-rate 1000` |
+
+Customise profiles in `~/.config/aiszx/profiles.yaml`, or per engagement in `overrides.yaml`. Discovery probes are limited to `-P…` flags. If nmap has its capabilities (`tools nmap-caps --apply`), Aiszx adds `--privileged` automatically. Without them it falls back to connect scans, skips UDP and OS detection, and records why.
+
+All of Nmap's XML, normal and grepable output is kept as evidence in the attempt's `raw/` folder. The XML is parsed incrementally, so if a scan was cut off, the hosts it had already finished are kept and the scan is flagged as incomplete. Every service is classified (http, https, smb, ldap, kerberos, winrm, mssql and so on) using [config/service_map.yaml](config/service_map.yaml), which the enumeration modules will use from Milestone 5. If the last recon of a target was interrupted, partial or failed, `recon` points you to `resume` (use `--force` to start fresh).
+
+```
+$ python3 pentest.py -e htb-box-reset services 10.129.73.247
+Services of 10.129.73.247 (run 2026-11-25_160000)
+  OS guess : Linux 5.0 - 5.14 (95%)
+PORT      STATE  SERVICE       VERSION                                   CATEGORY
+--------  -----  ------------  ----------------------------------------  -----------
+tcp/22    open   ssh           OpenSSH 8.9p1 Ubuntu (Ubuntu Linux; ...)  ssh
+tcp/80    open   http          nginx 1.18.0 (Ubuntu)                     http
+tcp/5985  open   http          Microsoft HTTPAPI httpd 2.0               http, winrm
+udp/53    open   domain        ISC BIND 9.18.18                          dns
+
+Uncertain (UDP open|filtered: no reply, could be open or filtered): 161/udp
+```
+
+`discover <cidr>` (an engagement-level run):
+- The whole range must be inside scope. Scope exclusions are passed to nmap as `--exclude`, and the tool runner verifies the combination before nmap starts. Ranges larger than a /16 are refused.
+- Live hosts are only listed. `--register` asks before adding each one as a target, and nothing else is scanned.
+- `discover --list` shows previous discovery runs.
+
 ### Running modules, history and resume
 
 ```bash
 python3 pentest.py modules list                                  # available modules, safety class, tools
+python3 pentest.py -e htb-box-reset run 10.129.73.247 -m recon.tcp_ports -m recon.service_id
 python3 pentest.py -e htb-box-reset run 10.129.73.247 -m core.connectivity
 python3 pentest.py -e htb-box-reset history 10.129.73.247        # all runs of the target
 python3 pentest.py -e htb-box-reset history 10.129.73.247 --run 2026-11-25_160000
@@ -265,9 +316,11 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - Runtime data lives in `~/.local/share/aiszx`, not inside the repository.
 - The tool registry is `config/tools.yaml` (overridable like every other config file), with code in `aiszx/tools/`.
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
-- `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` will be shortcuts over it from Milestone 4.
+- `run TARGET -m MODULE` is the generic way to run modules. `recon` and `full` are shortcuts over it; `enumerate` follows in Milestone 5.
+- `full` currently runs reconnaissance only and grows with each milestone.
+- `services TARGET` and `discover CIDR` are additional commands.
 - `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
-- Commands not yet implemented (`recon`, `enumerate`, `assess`, `report`, `full`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
+- Commands not yet implemented (`enumerate`, `assess`, `report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
 
 ## Development
 
@@ -289,7 +342,11 @@ aiszx/targets/        identity, scope rules, engagements, target manager, worksp
 aiszx/tools/          tool registry, inventory/probes, health checks, capabilities, installer, nmap caps
 aiszx/modules/        module interface (base.py), discovery (registry.py), built-in modules (core/)
 aiszx/orchestrator/   planner, executor, tool runner + scope guard, state, locks, recovery/resume, settings
-config/               shipped defaults (framework, tools, modules, profiles) + templates
+aiszx/modules/recon/  nmap modules: host_discovery, tcp_ports, service_id, udp
+aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
+aiszx/classify/       service → category classification
+aiszx/recon/          nmap command construction, host/port/service store, range discovery
+config/               shipped defaults (framework, tools, modules, profiles, service_map) + templates
 tests/unit/           pytest suite
 docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadmap
 ```
@@ -301,8 +358,8 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 1 | Foundation: CLI, engagements, scope, targets, workspaces, SQLite, logging | **done** |
 | 2 | Tool management: Parrot tool inventory (APT/dpkg/PATH/pipx/pyenv/go/git), versions, health checks, install plans, nmap `setcap` step | **done** |
 | 3 | Orchestrator: module interface, execution states, checkpoints, retries, resume, locks | **done** |
-| 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | next |
-| 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | |
+| 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | **done** |
+| 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | next |
 | 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | |
 | 7 | Assessment: findings, correlation, confidence, investigation paths | |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | |
@@ -312,11 +369,12 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 
 After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 3)
+## Current limitations (Milestone 4)
 
-- The only module is `core.connectivity`. Port scanning and service enumeration modules arrive in Milestones 4 to 6.
-- Module observations are stored in each unit's `parsed/result.json`. They move into a database table when the assessment engine needs them (Milestone 7).
-- The engagement validity window and per-command scope are enforced at run time. Scope rules are not yet applied to CIDR-range discovery runs (Milestone 4).
-- Resource usage is recorded as duration per command. CPU and memory per tool are not measured.
-- On a forced exit (second Ctrl+C or a killed terminal) the units that were running are marked `INTERRUPTED` on the next start. Their partial raw output is always kept.
+- **Web service identification** (titles, headers, TLS details, technologies) arrives with the HTTP modules in Milestone 5. For now, web services are identified and classified by Nmap only.
+- **UDP** scans only the profile's top-N ports and needs raw sockets. `open|filtered` results stay uncertain by design.
+- **Resumed TCP scans:** after `nmap --resume`, ports missing from the XML are read from the grepable output. That fallback is recorded as a limitation of the unit.
+- **Range discovery** is a single `nmap -sn` per range, up to a /16 per run. Discovered hosts are not scanned until you register them.
+- Module observations are stored in each unit's `parsed/result.json`; a database table follows in Milestone 7.
+- Resource usage is recorded as duration per command.
 - POSIX permission checks are skipped when running on Windows (development only).

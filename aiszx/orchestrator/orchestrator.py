@@ -1,4 +1,4 @@
-"""Run lifecycle: preflight → plan → persist → execute → checkpoint → finalise; and resume.
+"""Run lifecycle: preflight → layered plan/execute → checkpoint → finalise; and resume.
 
 Preflight (every start and resume)
     * reconcile crashed runs and stale locks
@@ -6,10 +6,16 @@ Preflight (every start and resume)
     * the target is re-resolved and re-checked against scope (hostname drift); the address
       used for this run is pinned and recorded in ``<run>/scope/scope.json``
 
+Layers
+    Modules are grouped by (stage, dependency depth): preflight → recon → enumeration → assessment,
+    and within a stage by ``depends_on``. Each layer is planned only after the previous layers
+    finished, so a module's units can depend on results of the same run (service identification
+    plans from the ports just found; enumeration plans from the services just identified).
+
 Checkpointing
-    * unit rows are created before anything runs; state changes are committed as they happen
-    * each attempt writes to its own ``attempt-NN`` directory; every file is hashed and
-      registered as evidence (failed attempts included)
+    * unit rows are written before their layer runs; state changes are committed as they happen
+    * each attempt writes to its own ``attempt-NN`` directory; every file is hashed and registered
+      as evidence (failed attempts included); hosts/ports/services are stored per unit
     * ``<run>/manifest.json`` is rewritten atomically after each unit finishes
 """
 
@@ -25,11 +31,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from aiszx import __version__
+from aiszx.classify.classifier import Classifier
 from aiszx.core.errors import AiszxError, NotFoundError, ScopeError, ValidationError
 from aiszx.core.fsutil import atomic_write_text
 from aiszx.core.timeutil import iso
-from aiszx.modules.base import RunContext, Safety, Stage
-from aiszx.modules.registry import ModuleRegistry, discover
+from aiszx.modules.base import Module, ModuleResult, RunContext, Safety, Stage
+from aiszx.modules.registry import STAGE_ORDER, ModuleRegistry, discover
 from aiszx.orchestrator.executor import AttemptFinished, AttemptStarted, Executor, UnitFinished, UnitSkipped
 from aiszx.orchestrator.fingerprint import file_sha256, fingerprint
 from aiszx.orchestrator.locks import LockManager
@@ -37,7 +44,7 @@ from aiszx.orchestrator.planner import PlannedUnit, Planner, ToolResolution, Too
 from aiszx.orchestrator.procutil import Owner
 from aiszx.orchestrator.recovery import decide, reconcile
 from aiszx.orchestrator.runlog import RunLog, unit_slug
-from aiszx.orchestrator.settings import ModuleSettings, load_settings
+from aiszx.orchestrator.settings import ModuleSettings, Profile, load_settings
 from aiszx.orchestrator.state import (
     COMPLETED,
     EXEC_COMPLETED,
@@ -54,6 +61,7 @@ from aiszx.orchestrator.state import (
     ExecutionStore,
 )
 from aiszx.orchestrator.toolrunner import ScopeGuard, ToolRunner
+from aiszx.recon.store import ReconStore
 from aiszx.targets.engagements import ACTIVE, Engagement
 from aiszx.targets.manager import Target
 
@@ -67,10 +75,28 @@ class RunReport:
     units: list[PlannedUnit]
     states: dict[tuple[str, str], str] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
+    executed: bool = True
 
     @property
     def counts(self) -> Counter:
         return Counter(self.states.values())
+
+
+@dataclass
+class _Run:
+    eid: str
+    run_id: str
+    run_dir: Path
+    eng: Engagement
+    target: Target
+    address: str
+    profile: Profile
+    settings: ModuleSettings
+    rows: dict[tuple[str, str], Any] | None      # previous unit rows when resuming
+    previous_status: str | None = None
+    confirmed: bool = False
+    declined: bool = False
+    forced: bool = False
 
 
 def inventory_tool_resolver(app) -> ToolResolver:
@@ -84,9 +110,23 @@ def inventory_tool_resolver(app) -> ToolResolver:
                 out[name] = ToolResolution("unknown", [], problem="not in the tool registry")
                 continue
             t = inventory.tools[name]
-            out[name] = ToolResolution(t.status, t.launch, t.version, "; ".join(t.problems) or None)
+            out[name] = ToolResolution(t.status, t.launch, t.version, "; ".join(t.problems) or None, dict(t.detail))
         return out
     return resolve
+
+
+def layers(modules: list[Module]) -> list[list[Module]]:
+    present = {m.meta.id: m for m in modules}
+    depth: dict[str, int] = {}
+
+    def d(mid: str) -> int:
+        if mid not in depth:
+            deps = [x for x in present[mid].meta.depends_on if x in present]
+            depth[mid] = 0 if not deps else 1 + max(d(x) for x in deps)
+        return depth[mid]
+
+    keys = {mid: (STAGE_ORDER.index(m.meta.stage), d(mid)) for mid, m in present.items()}
+    return [[present[mid] for mid in sorted(present) if keys[mid] == k] for k in sorted(set(keys.values()))]
 
 
 class Orchestrator:
@@ -103,10 +143,12 @@ class Orchestrator:
         announce: Callable[[list[PlannedUnit], dict[str, Any]], None] | None = None,
         cancel_event: threading.Event | None = None,
         handle_signals: bool = True,
+        classifier: Classifier | None = None,
     ) -> None:
         self.app = app
         self.db = app.db
         self.store = ExecutionStore(self.db)
+        self.recon = ReconStore(self.db)
         self.registry = registry or discover()
         self._settings = settings
         self.resolve_tools = resolve_tools or inventory_tool_resolver(app)
@@ -116,6 +158,7 @@ class Orchestrator:
         self.announce = announce or (lambda units, info: None)
         self.cancel = cancel_event or threading.Event()
         self.handle_signals = handle_signals
+        self.classifier = classifier or Classifier.load(user_config_dir=app.config.user_config_dir)
         self.cfg = app.config.orchestrator
         self.owner = Owner.current()
         self.locks = LockManager(self.db, self.owner, self.cfg.stale_after_seconds)
@@ -134,18 +177,13 @@ class Orchestrator:
         settings = self.settings_for(eng)
         prof = settings.profile(profile or self.cfg.default_profile)
         modules = self.registry.select(tokens)
-        planned = self._planner(settings).plan(modules, engagement=eng, target=target, address=address,
-                                               profile=prof, roe_max=_roe(eng))
-        if not planned:
-            raise ValidationError("the selected modules produced no work for this target")
 
         self.store.sync_modules(self.registry)
         run = self.app.layout.create_target_run(eng.slug, target.slug)
         snapshot = {
             "command": command, "modules": list(tokens), "profile": prof.name, "address": address,
-            "ceiling": _ceiling_text(prof, eng),
-            "effective": {pu.module.meta.id: {"options": dict(pu.config.options), "timeout": pu.config.timeout,
-                                              "max_attempts": pu.config.retry.max_attempts} for pu in planned},
+            "ceiling": _ceiling_text(prof, eng), "profile_params": dict(prof.params),
+            "effective": {m.meta.id: _effective_dict(settings, m) for m in modules},
             "settings_sources": [str(s) for s in settings.sources],
         }
         now = iso()
@@ -157,12 +195,8 @@ class Orchestrator:
             workspace_path=run.path.relative_to(self.app.config.data_dir).as_posix(),
         )
         self._write_scope_record(run.path, eng, target, address, decision)
-        with self.db.transaction():
-            for pu in planned:
-                pu.unit_dir = self._unit_dir(run.path, pu)
-                pu.row_id = self.store.insert_unit(**self._unit_fields(eid, target, pu))
-        report = self._execute(eid, run.run_id, run.path, eng, target, address, planned, upstream={},
-                               profile_name=prof.name)
+        state = _Run(eid, run.run_id, run.path, eng, target, address, prof, settings, rows=None)
+        report = self._run(state, modules)
         report.messages = messages + report.messages
         return report
 
@@ -179,58 +213,20 @@ class Orchestrator:
         settings = self.settings_for(eng)
         prof = settings.profile(snapshot["profile"])
         modules = self.registry.select(snapshot["modules"])
-        planned = self._planner(settings).plan(modules, engagement=eng, target=target, address=address,
-                                               profile=prof, roe_max=_roe(eng))
         run_dir = self.app.config.data_dir / ex["workspace_path"]
         self.app.layout.verify_target(eng.slug, target.slug, repair=True)  # recreate missing directories only
         rows = {(r["module_id"], r["unit_key"]): r for r in self.store.units(ex["id"])}
-        for pu in planned:
-            pu.unit_dir = self._unit_dir(run_dir, pu)
-            decide(pu, rows.get(pu.key), run_dir)
-
-        actionable = [pu for pu in planned if pu.decision in ("run", "rerun", "recover")]
-        report = RunReport(ex["id"], ex["run_id"], run_dir, ex["status"], planned,
-                           {pu.key: pu.state for pu in planned}, messages)
-        if not actionable:
-            report.messages.append("nothing to resume: every unit is complete and verified, or cannot run")
-            return report
-        if not self.confirm_cb(planned):
-            with self.db.transaction():
-                for pu in planned:
-                    if pu.decision == "recover" and pu.row_id:
-                        self.store.update_unit(pu.row_id, state=RECOVERY_REQUIRED, error_message=pu.decision_reason)
-            report.messages.append("resume cancelled; nothing was executed")
-            return report
-
         self.store.sync_modules(self.registry)
-        upstream: dict[str, list[dict[str, Any]]] = {}
-        with self.db.transaction():
-            for pu in planned:
-                if pu.decision in ("run", "rerun", "recover"):
-                    pu.state = PENDING
-                    fields = self._unit_fields(ex["id"], target, pu)
-                    if pu.row_id:
-                        fields.update(error_class=None, error_message=None, exit_code=None, ended_at=None)
-                        fields.pop("execution_id"), fields.pop("module_id"), fields.pop("unit_key"), fields.pop("target_id")
-                        self.store.update_unit(pu.row_id, **fields)
-                    else:
-                        pu.row_id = self.store.insert_unit(**fields)
-                elif pu.decision == "skip":
-                    if pu.row_id:
-                        self.store.update_unit(pu.row_id, skip_reason=pu.decision_reason)
-                    else:
-                        pu.row_id = self.store.insert_unit(**self._unit_fields(ex["id"], target, pu))
-                elif pu.decision == "reuse":
-                    row = rows[pu.key]
-                    _load_upstream(upstream, pu, run_dir / row["output_dir"])
-            self.store.update_execution(ex["id"], status=EXEC_RUNNING, owner_pid=self.owner.pid,
-                                        owner_host=self.owner.host, boot_id=self.owner.boot, heartbeat_at=iso(),
-                                        ended_at=None, pinned_address=address)
+        state = _Run(ex["id"], ex["run_id"], run_dir, eng, target, address, prof, settings, rows=rows,
+                     previous_status=ex["status"])
         self._write_scope_record(run_dir, eng, target, address, decision)
-        out = self._execute(ex["id"], ex["run_id"], run_dir, eng, target, address, planned, upstream,
-                            profile_name=prof.name)
-        out.messages = messages + out.messages
-        return out
+        report = self._run(state, modules)
+        if state.declined:
+            report.messages.append("resume cancelled; nothing was executed")
+        elif not report.executed:
+            report.messages.append("nothing to resume: every unit is complete and verified, or cannot run")
+        report.messages = messages + report.messages
+        return report
 
     def settings_for(self, eng: Engagement) -> ModuleSettings:
         if self._settings is not None:
@@ -238,10 +234,224 @@ class Orchestrator:
         return load_settings(user_config_dir=self.app.config.user_config_dir,
                              engagement_dir=self.app.layout.engagement_dir(eng.slug))
 
-    # -- internals ---------------------------------------------------------
-    def _planner(self, settings: ModuleSettings) -> Planner:
-        return Planner(settings, self.resolve_tools)
+    # -- layered run ---------------------------------------------------------
+    def _run(self, run: _Run, modules: list[Module]) -> RunReport:
+        runlog = RunLog(run.run_dir, run.run_id, run.target.canonical)
+        planner = Planner(run.settings, self.resolve_tools)
+        upstream: dict[str, list[dict[str, Any]]] = {}
+        all_planned: list[PlannedUnit] = []
+        states: dict[tuple[str, str], str] = {}
+        executing = False
+        restore = None
+        new_run = run.rows is None
+        try:
+            for index, layer in enumerate(layers(modules)):
+                if self.cancel.is_set() or run.forced:
+                    break
+                services = self.recon.latest_services(run.target.id, prefer_execution=run.eid).services
+                planned = planner.plan(layer, engagement=run.eng, target=run.target, address=run.address,
+                                       profile=run.profile, roe_max=_roe(run.eng), upstream=upstream,
+                                       services=services, blocked=self._blocked(layer, all_planned, states))
+                for pu in planned:
+                    pu.unit_dir = self._unit_dir(run.run_dir, pu)
+                if new_run:
+                    with self.db.transaction():
+                        for pu in planned:
+                            pu.row_id = self.store.insert_unit(**self._unit_fields(run.eid, run.target, pu))
+                elif not self._apply_resume_decisions(run, planned, upstream):
+                    break  # declined
+                runnable = any(pu.state == PENDING for pu in planned)
+                if (runnable or new_run) and not executing:
+                    executing = True
+                    ok, why = self.locks.acquire(f"execution:{run.eid}", run.eid)
+                    if not ok:
+                        raise AiszxError(f"run {run.run_id} is locked: {why}")
+                    if not new_run:
+                        self.store.update_execution(run.eid, status=EXEC_RUNNING, owner_pid=self.owner.pid,
+                                                    owner_host=self.owner.host, boot_id=self.owner.boot,
+                                                    heartbeat_at=iso(), ended_at=None, pinned_address=run.address)
+                    runlog.event("INFO", "run.start" if new_run else "run.resume", f"address {run.address}")
+                    if self.handle_signals:
+                        restore = self._install_sigint()
+                self.announce(planned, {"run_id": run.run_id, "run_dir": run.run_dir, "address": run.address,
+                                        "engagement": run.eng.slug, "target": run.target.canonical,
+                                        "profile": run.profile.name, "layer": index, "new_run": new_run})
+                for pu in planned:
+                    if pu.state == SKIPPED:
+                        runlog.event("INFO", "unit.skipped", pu.skip_reason or pu.decision_reason,
+                                     module=pu.module.meta.id, unit=pu.unit.key)
+                if runnable:
+                    states.update(self._execute_layer(run, planned, upstream, services, runlog))
+                else:
+                    states.update({pu.key: pu.state for pu in planned})
+                all_planned.extend(planned)
+        finally:
+            if restore:
+                restore()
+            if executing:
+                status = _final_status(states, self.cancel.is_set() or run.forced)
+                counts = Counter(r["state"] for r in self.store.units(run.eid))
+                self.store.update_execution(run.eid, status=status, ended_at=iso(), heartbeat_at=iso(),
+                                            summary_json={k: counts[k] for k in sorted(counts)})
+                self.locks.release_execution(run.eid)
+                self._write_manifest(run)
+                runlog.event("INFO", "run.end", f"{status}: " + ", ".join(
+                    f"{n} {s.lower()}" for s, n in sorted(states_counter(states).items())))
+                self.store.log(run.eid, "INFO", "run.end", status, counts=dict(counts))
+        status = _final_status(states, self.cancel.is_set() or run.forced) if executing else (run.previous_status or "")
+        return RunReport(run.eid, run.run_id, run.run_dir, status, all_planned, states, executed=executing)
 
+    def _blocked(self, layer: list[Module], done: list[PlannedUnit], states: dict) -> dict[str, str]:
+        blocked = {}
+        for m in layer:
+            for dep in m.meta.depends_on:
+                units = [pu for pu in done if pu.module.meta.id == dep]
+                if units and not any(states.get(pu.key) == COMPLETED for pu in units):
+                    worst = next((states.get(pu.key) for pu in units if states.get(pu.key) != COMPLETED), "?")
+                    blocked[m.meta.id] = f"upstream {dep} did not complete ({worst})"
+        return blocked
+
+    def _apply_resume_decisions(self, run: _Run, planned: list[PlannedUnit], upstream: dict) -> bool:
+        for pu in planned:
+            decide(pu, run.rows.get(pu.key), run.run_dir)
+        actionable = [pu for pu in planned if pu.decision in ("run", "rerun", "recover")]
+        if actionable and not run.confirmed:
+            if not self.confirm_cb(planned):
+                with self.db.transaction():
+                    for pu in planned:
+                        if pu.decision == "recover" and pu.row_id:
+                            self.store.update_unit(pu.row_id, state=RECOVERY_REQUIRED, error_message=pu.decision_reason)
+                run.declined = True
+                return False
+            run.confirmed = True
+        with self.db.transaction():
+            for pu in planned:
+                if pu.decision in ("run", "rerun", "recover"):
+                    pu.state = PENDING
+                    fields = self._unit_fields(run.eid, run.target, pu)
+                    if pu.row_id:
+                        for k in ("execution_id", "module_id", "unit_key", "target_id"):
+                            fields.pop(k)
+                        fields.update(error_class=None, error_message=None, exit_code=None, ended_at=None, summary=None)
+                        self.store.update_unit(pu.row_id, **fields)
+                        self.recon.delete_for_unit(pu.row_id)  # its old hosts/ports/services are superseded
+                    else:
+                        pu.row_id = self.store.insert_unit(**fields)
+                elif pu.decision == "skip":
+                    if pu.row_id:
+                        self.store.update_unit(pu.row_id, skip_reason=pu.decision_reason)
+                    else:
+                        pu.row_id = self.store.insert_unit(**self._unit_fields(run.eid, run.target, pu))
+                elif pu.decision == "reuse":
+                    _load_upstream(upstream, pu, run.run_dir / run.rows[pu.key]["output_dir"])
+        return True
+
+    def _execute_layer(self, run: _Run, planned: list[PlannedUnit], upstream: dict, services: list,
+                       runlog: RunLog) -> dict[tuple[str, str], str]:
+        eid, target, run_dir = run.eid, run.target, run.run_dir
+        pinned = {} if target.identity.is_ip else {target.canonical: [run.address]}
+        guard = ScopeGuard(self.app.scope().policy(run.eng), run.eng, self._resolver(), pinned)
+        launch_all: dict[str, list[str]] = {}
+        for pu in planned:
+            launch_all.update(pu.tool_launch)
+        runner = ToolRunner(guard, launch_all, self.cancel, kill_grace=self.cfg.kill_grace_seconds)
+        attempt_ids: dict[tuple[tuple[str, str], int], str] = {}
+
+        def on_event(ev) -> None:
+            pu = ev.pu
+            mid, ukey = pu.key
+            if isinstance(ev, AttemptStarted):
+                rel = ev.attempt_dir.relative_to(run_dir).as_posix()
+                with self.db.transaction():
+                    self.store.update_unit(pu.row_id, state=RUNNING, attempt=ev.attempt, output_dir=rel,
+                                           started_at=iso(), heartbeat_at=iso())
+                    attempt_ids[(pu.key, ev.attempt)] = self.store.start_attempt(pu.row_id, ev.attempt, rel)
+                runlog.event("INFO", "attempt.start", f"attempt {ev.attempt}", module=mid, unit=ukey)
+            elif isinstance(ev, AttemptFinished):
+                with self.db.transaction():
+                    self.store.finish_attempt(attempt_ids[(pu.key, ev.attempt)], status=ev.status,
+                                              commands_json=ev.commands, exit_code=ev.exit_code,
+                                              error_class=ev.error_class, error_message=ev.error_message,
+                                              duration_s=round(ev.duration_s, 3))
+                    self._register_evidence(eid, target, pu, ev.attempt, ev.attempt_dir, run_dir, ev.result)
+                for c in ev.commands:
+                    runlog.event("INFO", "command", " ".join(c["argv"]), module=mid, unit=ukey,
+                                 exit_code=c["exit_code"], duration_s=c["duration_s"], timed_out=c["timed_out"])
+                runlog.event("INFO" if ev.status == "ok" else "WARNING", "attempt.end",
+                             f"attempt {ev.attempt}: {ev.status}"
+                             + (f" ({ev.error_class}: {ev.error_message})" if ev.error_class else ""),
+                             module=mid, unit=ukey)
+            elif isinstance(ev, UnitSkipped):
+                self.store.update_unit(pu.row_id, state=SKIPPED, skip_reason=ev.reason, ended_at=iso())
+                runlog.event("INFO", "unit.skipped", ev.reason, module=mid, unit=ukey)
+                self.progress(f"[skip] {pu.label}: {ev.reason}")
+            elif isinstance(ev, UnitFinished):
+                fields: dict[str, Any] = {"state": ev.state, "ended_at": iso(), "exit_code": ev.exit_code,
+                                          "error_class": ev.error_class, "error_message": ev.error_message}
+                if ev.state == COMPLETED and ev.attempt_dir is not None:
+                    fields["outputs_json"] = _outputs(ev.attempt_dir, run_dir)
+                    fields["summary"] = ev.result.summary if ev.result else None
+                    _load_upstream(upstream, pu, ev.attempt_dir)
+                with self.db.transaction():
+                    self.store.update_unit(pu.row_id, **fields)
+                    if ev.state == COMPLETED and ev.result is not None:
+                        self.recon.replace_for_unit(unit_id=pu.row_id, execution_id=eid, engagement_id=run.eng.id,
+                                                    target_id=target.id, result=ev.result)
+                    if ev.state != COMPLETED:
+                        self.store.log(eid, "WARNING", "unit.end", f"{pu.label}: {ev.state}", unit_id=pu.row_id,
+                                       error=ev.error_message)
+                self.locks.release(_unit_lock(target, pu))
+                self._write_manifest(run)
+                tag = {COMPLETED: " ok ", FAILED: "FAIL", INTERRUPTED: "STOP"}.get(ev.state, ev.state)
+                detail = (ev.result.summary if ev.result else "") or ev.error_message or ""
+                runlog.event("INFO" if ev.state == COMPLETED else "WARNING", "unit.end", f"{ev.state}: {detail}",
+                             module=mid, unit=ukey)
+                self.progress(f"[{tag}] {pu.label} ({ev.duration_s:.1f}s): {detail}")
+                if ev.result is not None:
+                    for lim in ev.result.limitations:
+                        self.progress(f"       note: {lim}")
+
+        def approve(pu: PlannedUnit) -> bool:
+            granted = bool(self.approve_cb(pu))
+            self.store.record_approval(execution_id=eid, target_id=target.id, action=f"module:{pu.module.meta.id}",
+                                       safety=pu.module.meta.safety.value, approved=granted, actor=self.app.actor,
+                                       note=pu.unit.key)
+            return granted
+
+        def heartbeat() -> None:
+            now = iso()
+            self.store.update_execution(eid, heartbeat_at=now)
+            self.db.execute("UPDATE module_executions SET heartbeat_at = ? WHERE execution_id = ? AND state = ?",
+                            (now, eid, RUNNING))
+            self.locks.heartbeat(eid)
+
+        def postprocess(pu: PlannedUnit, result: ModuleResult) -> None:
+            self.classifier.apply(result.services)
+
+        contexts = {pu.key: RunContext(
+            execution_id=eid, run_id=run.run_id, run_dir=run_dir, engagement=run.eng, target=target,
+            address=run.address, profile=run.profile.name, options=dict(pu.config.options),
+            tool_launch=pu.tool_launch, tool_versions=pu.tool_versions, upstream=upstream, cancel_event=self.cancel,
+            previous_attempt_dir=pu.previous_attempt_dir, profile_params=run.profile.params,
+            tool_details=pu.tool_details, services=list(services),
+        ) for pu in planned}
+
+        executor = Executor(
+            max_workers=self.cfg.max_workers, runner=runner, cancel_event=self.cancel, on_event=on_event,
+            approve=approve, acquire=lambda pu: self.locks.acquire(_unit_lock(target, pu), eid),
+            heartbeat=heartbeat, heartbeat_seconds=self.cfg.heartbeat_seconds, postprocess=postprocess,
+        )
+        try:
+            return executor.run(planned, contexts)
+        except KeyboardInterrupt:
+            run.forced = True
+            self.cancel.set()
+            self.db.execute("UPDATE module_executions SET state = ?, ended_at = ? WHERE execution_id = ? AND state = ?",
+                            (INTERRUPTED, iso(), eid, RUNNING))
+            current = {(r["module_id"], r["unit_key"]): r["state"] for r in self.store.units(eid)}
+            return {pu.key: current.get(pu.key, pu.state) for pu in planned}
+
+    # -- helpers -------------------------------------------------------------
     def _load(self, engagement_slug: str, target_raw: str) -> tuple[Engagement, Target]:
         eng = self.app.engagements().get(engagement_slug)
         return eng, self.app.targets().get(eng, target_raw)
@@ -295,170 +505,68 @@ class Orchestrator:
         atomic_write_text(run_dir / "scope" / name, text)
         atomic_write_text(run_dir / "scope" / "scope.json", text)
 
-    def _execute(self, eid: str, run_id: str, run_dir: Path, eng: Engagement, target: Target, address: str,
-                 planned: list[PlannedUnit], upstream: dict[str, list[dict[str, Any]]], *,
-                 profile_name: str) -> RunReport:
-        runlog = RunLog(run_dir, run_id, target.canonical)
-        ok, why = self.locks.acquire(f"execution:{eid}", eid)
-        if not ok:
-            raise AiszxError(f"run {run_id} is locked: {why}")
-        self.announce(planned, {"run_id": run_id, "run_dir": run_dir, "address": address, "engagement": eng.slug,
-                                "target": target.canonical, "profile": profile_name})
-        runlog.event("INFO", "run.start", f"{len(planned)} unit(s), address {address}")
-        self.store.log(eid, "INFO", "run.start", f"{len(planned)} unit(s)", address=address)
-        for pu in planned:
-            if pu.state == SKIPPED:
-                runlog.event("INFO", "unit.skipped", pu.skip_reason or pu.decision_reason,
-                             module=pu.module.meta.id, unit=pu.unit.key)
-
-        pinned = {} if target.identity.is_ip else {target.canonical: [address]}
-        guard = ScopeGuard(self.app.scope().policy(eng), eng, self._resolver(), pinned)
-        launch_all: dict[str, list[str]] = {}
-        for pu in planned:
-            launch_all.update(pu.tool_launch)
-        runner = ToolRunner(guard, launch_all, self.cancel, kill_grace=self.cfg.kill_grace_seconds)
-        attempt_ids: dict[tuple[tuple[str, str], int], str] = {}
-
-        def on_event(ev) -> None:
-            pu = ev.pu
-            mid, ukey = pu.key
-            if isinstance(ev, AttemptStarted):
-                rel = ev.attempt_dir.relative_to(run_dir).as_posix()
-                with self.db.transaction():
-                    self.store.update_unit(pu.row_id, state=RUNNING, attempt=ev.attempt, output_dir=rel,
-                                           started_at=iso(), heartbeat_at=iso())
-                    attempt_ids[(pu.key, ev.attempt)] = self.store.start_attempt(pu.row_id, ev.attempt, rel)
-                runlog.event("INFO", "attempt.start", f"attempt {ev.attempt}", module=mid, unit=ukey)
-            elif isinstance(ev, AttemptFinished):
-                with self.db.transaction():
-                    self.store.finish_attempt(attempt_ids[(pu.key, ev.attempt)], status=ev.status,
-                                              commands_json=ev.commands, exit_code=ev.exit_code,
-                                              error_class=ev.error_class, error_message=ev.error_message,
-                                              duration_s=round(ev.duration_s, 3))
-                    self._register_evidence(eid, target, pu, ev.attempt, ev.attempt_dir, run_dir, ev.result)
-                for c in ev.commands:
-                    runlog.event("INFO", "command", " ".join(c["argv"]), module=mid, unit=ukey,
-                                 exit_code=c["exit_code"], duration_s=c["duration_s"], timed_out=c["timed_out"])
-                level = "INFO" if ev.status == "ok" else "WARNING"
-                runlog.event(level, "attempt.end", f"attempt {ev.attempt}: {ev.status}"
-                             + (f" ({ev.error_class}: {ev.error_message})" if ev.error_class else ""),
-                             module=mid, unit=ukey)
-            elif isinstance(ev, UnitSkipped):
-                self.store.update_unit(pu.row_id, state=SKIPPED, skip_reason=ev.reason, ended_at=iso())
-                runlog.event("INFO", "unit.skipped", ev.reason, module=mid, unit=ukey)
-                self.progress(f"[skip] {pu.label}: {ev.reason}")
-            elif isinstance(ev, UnitFinished):
-                fields: dict[str, Any] = {"state": ev.state, "ended_at": iso(), "exit_code": ev.exit_code,
-                                          "error_class": ev.error_class, "error_message": ev.error_message}
-                if ev.state == COMPLETED and ev.attempt_dir is not None:
-                    fields["outputs_json"] = _outputs(ev.attempt_dir, run_dir)
-                    fields["summary"] = ev.result.summary if ev.result else None
-                    _load_upstream(upstream, pu, ev.attempt_dir)
-                with self.db.transaction():
-                    self.store.update_unit(pu.row_id, **fields)
-                    if ev.state != COMPLETED:
-                        self.store.log(eid, "WARNING", "unit.end", f"{pu.label}: {ev.state}", unit_id=pu.row_id,
-                                       error=ev.error_message)
-                self.locks.release(_unit_lock(target, pu))
-                self._write_manifest(eid, run_id, run_dir, eng, target)
-                tag = {COMPLETED: " ok ", FAILED: "FAIL", INTERRUPTED: "STOP"}.get(ev.state, ev.state)
-                detail = (ev.result.summary if ev.result else "") or ev.error_message or ""
-                runlog.event("INFO" if ev.state == COMPLETED else "WARNING", "unit.end", f"{ev.state}: {detail}",
-                             module=mid, unit=ukey)
-                self.progress(f"[{tag}] {pu.label} ({ev.duration_s:.1f}s): {detail}")
-
-        def approve(pu: PlannedUnit) -> bool:
-            granted = bool(self.approve_cb(pu))
-            self.store.record_approval(execution_id=eid, target_id=target.id, action=f"module:{pu.module.meta.id}",
-                                       safety=pu.module.meta.safety.value, approved=granted, actor=self.app.actor,
-                                       note=pu.unit.key)
-            return granted
-
-        def heartbeat() -> None:
-            now = iso()
-            self.store.update_execution(eid, heartbeat_at=now)
-            self.db.execute("UPDATE module_executions SET heartbeat_at = ? WHERE execution_id = ? AND state = ?",
-                            (now, eid, RUNNING))
-            self.locks.heartbeat(eid)
-
-        contexts = {pu.key: RunContext(
-            execution_id=eid, run_id=run_id, run_dir=run_dir, engagement=eng, target=target, address=address,
-            profile=profile_name, options=dict(pu.config.options), tool_launch=pu.tool_launch, tool_versions=pu.tool_versions,
-            upstream=upstream, cancel_event=self.cancel, previous_attempt_dir=pu.previous_attempt_dir,
-        ) for pu in planned}
-
-        executor = Executor(
-            max_workers=self.cfg.max_workers, runner=runner, cancel_event=self.cancel, on_event=on_event,
-            approve=approve, acquire=lambda pu: self.locks.acquire(_unit_lock(target, pu), eid),
-            heartbeat=heartbeat, heartbeat_seconds=self.cfg.heartbeat_seconds,
-        )
-        restore = self._install_sigint() if self.handle_signals else None
-        states: dict[tuple[str, str], str] = {pu.key: pu.state for pu in planned}
-        forced = False
-        try:
-            states = executor.run(planned, contexts)
-        except KeyboardInterrupt:
-            forced = True
-        finally:
-            if restore:
-                restore()
-            if forced:
-                self.db.execute("UPDATE module_executions SET state = ?, ended_at = ? WHERE execution_id = ? AND state = ?",
-                                (INTERRUPTED, iso(), eid, RUNNING))
-                states = {(r["module_id"], r["unit_key"]): r["state"] for r in self.store.units(eid)}
-            status = _final_status(states, self.cancel.is_set() or forced)
-            counts = Counter(states.values())
-            self.store.update_execution(eid, status=status, ended_at=iso(), heartbeat_at=iso(),
-                                        summary_json={k: counts[k] for k in sorted(counts)})
-            self.locks.release_execution(eid)
-            self._write_manifest(eid, run_id, run_dir, eng, target)
-            runlog.event("INFO", "run.end", f"{status}: " + ", ".join(f"{n} {s.lower()}" for s, n in sorted(counts.items())))
-            self.store.log(eid, "INFO", "run.end", status, counts=dict(counts))
-        return RunReport(eid, run_id, run_dir, status, planned, states)
-
     def _register_evidence(self, eid: str, target: Target, pu: PlannedUnit, attempt: int, adir: Path,
                            run_dir: Path, result) -> None:
-        descriptions = result.evidence_descriptions if result else {}
-        sensitive = set(result.sensitive_files) if result else set()
-        tools = ",".join(sorted(pu.tool_launch)) or None
-        for path in sorted(p for p in adir.rglob("*") if p.is_file()):
-            rel = path.relative_to(run_dir).as_posix()
-            kind = "parsed" if "/parsed/" in f"/{rel}" else ("log" if path.name.endswith(".cmd.txt") else "raw")
-            self.store.add_evidence(
-                execution_id=eid, target_id=target.id, module_execution_id=pu.row_id, attempt=attempt, tool=tools,
-                kind=kind, rel_path=rel, sha256=file_sha256(path), size_bytes=path.stat().st_size,
-                sensitive=path.name in sensitive, description=descriptions.get(path.name),
-            )
+        register_evidence(self.store, eid=eid, target_id=target.id, unit_id=pu.row_id, attempt=attempt, adir=adir,
+                          run_dir=run_dir, result=result, tools=",".join(sorted(pu.tool_launch)) or None)
 
-    def _write_manifest(self, eid: str, run_id: str, run_dir: Path, eng: Engagement, target: Target) -> None:
+    def _write_manifest(self, run: _Run) -> None:
         units = []
-        for r in self.store.units(eid):
+        for r in self.store.units(run.eid):
             units.append({"module": r["module_id"], "unit": r["unit_key"], "state": r["state"], "attempt": r["attempt"],
                           "output_dir": r["output_dir"], "outputs": json.loads(r["outputs_json"] or "[]")})
-        manifest = {"run_id": run_id, "execution_id": eid, "engagement": eng.slug, "target": target.canonical,
-                    "updated_at": iso(), "units": units}
-        atomic_write_text(run_dir / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+        manifest = {"run_id": run.run_id, "execution_id": run.eid, "engagement": run.eng.slug,
+                    "target": run.target.canonical, "updated_at": iso(), "units": units}
+        atomic_write_text(run.run_dir / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
 
     def _resolver(self):
         from aiszx.targets import resolver
         return resolver.resolve_host
 
     def _install_sigint(self):
-        if threading.current_thread() is not threading.main_thread():
-            return None
+        return install_sigint(self.cancel, self.progress)
 
-        def handler(signum, frame):
-            if self.cancel.is_set():
-                raise KeyboardInterrupt
-            self.cancel.set()
-            self.progress("Interrupt received: stopping running tools and saving state "
-                          "(press Ctrl+C again to force)")
 
-        previous = signal.signal(signal.SIGINT, handler)
-        return lambda: signal.signal(signal.SIGINT, previous)
+def install_sigint(cancel: threading.Event, progress: Callable[[str], None]):
+    """First Ctrl+C sets ``cancel`` (tools are stopped, state saved); a second one raises KeyboardInterrupt."""
+    if threading.current_thread() is not threading.main_thread():
+        return None
+
+    def handler(signum, frame):
+        if cancel.is_set():
+            raise KeyboardInterrupt
+        cancel.set()
+        progress("Interrupt received: stopping running tools and saving state (press Ctrl+C again to force)")
+
+    previous = signal.signal(signal.SIGINT, handler)
+    return lambda: signal.signal(signal.SIGINT, previous)
 
 
 # --- helpers ------------------------------------------------------------------------
+
+def register_evidence(store: ExecutionStore, *, eid: str, target_id: str | None, unit_id: str | None,
+                      attempt: int | None, adir: Path, run_dir: Path, result=None, tools: str | None = None) -> None:
+    descriptions = result.evidence_descriptions if result else {}
+    sensitive = set(result.sensitive_files) if result else set()
+    for path in sorted(p for p in adir.rglob("*") if p.is_file()):
+        rel = path.relative_to(run_dir).as_posix()
+        kind = "parsed" if "/parsed/" in f"/{rel}" else ("log" if path.name.endswith(".cmd.txt") else "raw")
+        store.add_evidence(
+            execution_id=eid, target_id=target_id, module_execution_id=unit_id, attempt=attempt, tool=tools,
+            kind=kind, rel_path=rel, sha256=file_sha256(path), size_bytes=path.stat().st_size,
+            sensitive=path.name in sensitive, description=descriptions.get(path.name),
+        )
+
+
+def states_counter(states: dict) -> Counter:
+    return Counter(states.values())
+
+
+def _effective_dict(settings: ModuleSettings, module: Module) -> dict[str, Any]:
+    eff = settings.effective(module)
+    return {"enabled": eff.enabled, "options": dict(eff.options), "timeout": eff.timeout,
+            "max_attempts": eff.retry.max_attempts}
+
 
 def _roe(eng: Engagement) -> Safety | None:
     value = (eng.roe or {}).get("max_safety")

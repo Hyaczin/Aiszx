@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from aiszx.core import paths
-from aiszx.core.config import Choice, MapOf, deep_merge, load_yaml_file, validate
+from aiszx.core.config import Choice, ListOf, MapOf, deep_merge, load_yaml_file, validate
 from aiszx.core.errors import ConfigError, NotFoundError
 from aiszx.modules.base import Module, RetryPolicy, Safety
 
@@ -26,7 +27,20 @@ MODULE_ENTRY = {
     "options?": dict,
 }
 MODULES_SCHEMA = {"version": int, "modules": MapOf(MODULE_ENTRY, _MODULE_KEY)}
-PROFILE_ENTRY = {"description": str, "max_safety": Choice(*SAFETY_NAMES)}
+NMAP_PROFILE = {
+    "timing?": int,                 # -T0..5
+    "discovery_probes?": ListOf(str),  # host discovery probe flags, e.g. -PE, -PS22,80
+    "tcp_ports?": str,              # "all" | "top:<n>" | explicit list "22,80,443"
+    "min_rate?": int,               # 0 = nmap default
+    "max_retries?": int,
+    "scripts?": bool,               # -sC during service identification
+    "version_all?": bool,           # --version-all
+    "os_detection?": bool,          # -O (needs raw sockets)
+    "udp_top_ports?": int,          # 0 = no UDP scan
+}
+PROFILE_ENTRY = {"description": str, "max_safety": Choice(*SAFETY_NAMES), "nmap?": NMAP_PROFILE}
+_PROBE_RE = re.compile(r"^-P(?:E|P|M|[SAUY][0-9,\-]*|O[0-9,]*)$")
+_TCP_PORTS_RE = re.compile(r"^(all|top:\d{1,5}|\d{1,5}(?:-\d{1,5})?(?:,\d{1,5}(?:-\d{1,5})?)*)$")
 PROFILES_SCHEMA = {"version": int, "profiles": MapOf(PROFILE_ENTRY, r"^[a-z0-9][a-z0-9_-]*$")}
 OVERRIDES_SCHEMA = {"modules?": MapOf(MODULE_ENTRY, _MODULE_KEY), "profiles?": MapOf(PROFILE_ENTRY, r"^[a-z0-9][a-z0-9_-]*$")}
 
@@ -36,6 +50,22 @@ class Profile:
     name: str
     description: str
     max_safety: Safety
+    params: Mapping[str, Any] = field(default_factory=dict)   # tool sections, e.g. {"nmap": {...}}
+
+
+def _check_profile(name: str, p: Mapping[str, Any]) -> None:
+    nmap = p.get("nmap", {})
+    where = f"profiles.{name}.nmap"
+    for probe in nmap.get("discovery_probes", []):
+        if not _PROBE_RE.fullmatch(probe):
+            raise ConfigError(f"{where}.discovery_probes: {probe!r} is not a host discovery probe (-PE, -PP, -PM, -PS<ports>, ...)")
+    if "tcp_ports" in nmap and not _TCP_PORTS_RE.fullmatch(nmap["tcp_ports"]):
+        raise ConfigError(f"{where}.tcp_ports: use 'all', 'top:<n>' or a port list like '22,80,8000-8100'")
+    if not 0 <= nmap.get("timing", 3) <= 5:
+        raise ConfigError(f"{where}.timing must be 0-5")
+    for key in ("min_rate", "max_retries", "udp_top_ports"):
+        if nmap.get(key, 0) < 0:
+            raise ConfigError(f"{where}.{key} must be >= 0")
 
 
 @dataclass(frozen=True)
@@ -102,8 +132,12 @@ def load_settings(*, user_config_dir: Path | None, engagement_dir: Path | None,
         modules = deep_merge(modules, ov.get("modules", {}))
         profiles = deep_merge(profiles, ov.get("profiles", {}))
         sources.append(engagement_dir / "overrides.yaml")
+    for name, prof in profiles.items():
+        _check_profile(name, prof)
     return ModuleSettings(
         modules=modules,
-        profiles={n: Profile(n, p["description"], Safety(p["max_safety"])) for n, p in profiles.items()},
+        profiles={n: Profile(n, p["description"], Safety(p["max_safety"]),
+                             {k: v for k, v in p.items() if k not in ("description", "max_safety")})
+                  for n, p in profiles.items()},
         sources=sources,
     )

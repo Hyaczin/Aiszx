@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from aiszx.core.errors import ConfigError, NotFoundError
-from aiszx.modules.base import Module, Safety
+from aiszx.modules.base import Module, Safety, Stage
+
+STAGE_ORDER = [Stage.PREFLIGHT, Stage.RECON, Stage.ENUMERATION, Stage.ASSESSMENT]
 
 MODULE_ID_RE = re.compile(r"^[a-z0-9]+(?:\.[a-z0-9_]+)+$")
 _SKIP = {"base", "registry"}
@@ -70,6 +72,8 @@ def _validate(modules: dict[str, Module]) -> None:
         for dep in meta.depends_on:
             if dep not in modules:
                 raise ConfigError(f"module {mid} depends on unknown module {dep}")
+            if STAGE_ORDER.index(modules[dep].meta.stage) > STAGE_ORDER.index(meta.stage):
+                raise ConfigError(f"module {mid} ({meta.stage.value}) cannot depend on a later-stage module {dep}")
     # cycle detection
     state: dict[str, int] = {}
 

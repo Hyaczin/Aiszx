@@ -69,14 +69,18 @@ def _plan_rows(units: list[PlannedUnit]) -> list[tuple]:
 
 
 def _announce(units: list[PlannedUnit], info: dict[str, Any]) -> None:
-    print(f"Run {info['run_id']}: {info['target']} (engagement {info['engagement']}, profile {info['profile']})")
-    print(f"  address   : {info['address']}")
-    print(f"  workspace : {info['run_dir']}")
-    print(table(_plan_rows(units), ("MODULE", "UNIT", "SAFETY", "ACTION", "NOTE"), indent="  "))
-    print()
+    if info.get("layer", 0) == 0:
+        verb = "Run" if info.get("new_run", True) else "Resuming run"
+        print(f"{verb} {info['run_id']}: {info['target']} (engagement {info['engagement']}, profile {info['profile']})")
+        print(f"  address   : {info['address']}")
+        print(f"  workspace : {info['run_dir']}")
+    if units:
+        stage = units[0].module.meta.stage.value
+        print(f"\n  stage {stage}:")
+        print(table(_plan_rows(units), ("MODULE", "UNIT", "SAFETY", "ACTION", "NOTE"), indent="  "))
 
 
-def _finish(report: RunReport) -> int:
+def _finish(report: RunReport, ctx: AppContext, args: argparse.Namespace) -> int:
     for msg in report.messages:
         print(f"note: {msg}")
     counts = report.counts
@@ -84,16 +88,18 @@ def _finish(report: RunReport) -> int:
     print(f"\nRun {report.run_id}: {report.status} ({parts})")
     if not any(counts.get(s) for s in ("COMPLETED", "FAILED", "INTERRUPTED")):
         print("Nothing was executed: every unit was skipped (reasons above).")
-    print(f"Details: python3 pentest.py history <target> --run {report.run_id}")
+    eng = engagement_slug(ctx, args)
+    prefix = "python3 pentest.py" + ("" if eng == ctx.config.default_engagement else f" -e {eng}")
+    print(f"Details: {prefix} history {args.target} --run {report.run_id}")
     if report.status == EXEC_INTERRUPTED:
-        print("Continue with: python3 pentest.py resume <target>")
+        print(f"Continue with: {prefix} resume {args.target}")
     return EXIT.get(report.status, 1)
 
 
 def cmd_run(ctx: AppContext, args: argparse.Namespace) -> int:
     orch = ctx.orchestrator(approve=_approver(args), progress=print, announce=_announce)
     report = orch.start(engagement_slug(ctx, args), args.target, args.modules, profile=args.profile)
-    return _finish(report)
+    return _finish(report, ctx, args)
 
 
 def cmd_resume(ctx: AppContext, args: argparse.Namespace) -> int:
@@ -106,10 +112,11 @@ def cmd_resume(ctx: AppContext, args: argparse.Namespace) -> int:
                   "(the previous attempt directories are kept).")
         return confirm("Continue?", assume_yes=ctx.assume_yes)
 
-    orch = ctx.orchestrator(approve=_approver(args), progress=print, confirm=confirm_plan, announce=lambda u, i: print())
+    orch = ctx.orchestrator(approve=_approver(args), progress=print, confirm=confirm_plan,
+                            announce=lambda u, i: _announce(u, i) if i.get("layer", 0) > 0 and u else None)
     report = orch.resume(engagement_slug(ctx, args), args.target, run_id=args.run_id)
     if any(m.startswith(("nothing to resume", "resume cancelled")) for m in report.messages):
         for msg in report.messages:
             print(msg)
         return 0
-    return _finish(report)
+    return _finish(report, ctx, args)

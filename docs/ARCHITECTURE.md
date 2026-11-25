@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 3 implemented. Implementation notes for Milestone 3 are in §13.
+**Status:** Approved 2026-11-25. Milestones 1 to 4 implemented. Implementation notes are in §13 (M3) and §14 (M4).
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -969,3 +969,23 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **Approvals.** `intrusive` units need an interactive approval or `--approve <module>`; `--yes` never approves them. Every decision is stored in `approvals`.
 - **Observations** are written to `parsed/result.json` for now; a database table follows in Milestone 7.
 - **CLI.** Milestone 3 adds `run`, `resume`, `history`, `modules list|show` and `engagement update`.
+
+---
+
+## 14. Milestone 4 implementation notes
+
+- **Layered execution.** Modules are grouped by (stage, dependency depth). Each layer is planned only after the previous layers finish, so units can take their inputs from the same run. For example, `recon.service_id` plans with the ports just found. Those ports are part of its input fingerprint, so resume re-runs it only when they change. A module whose in-run dependency did not complete is skipped at planning time. Dependencies may not point to a later stage; this is validated at discovery.
+- **Schema.** Migration `0004_recon.sql` adds `discovered_hosts`, `discovered_ports` and `services`, plus `evidence.service_id`. Each row belongs to the module execution that produced it, and a re-run replaces exactly those rows. Services are keyed by `protocol/port` and are not tied to port rows by foreign key, so ownership stays simple.
+- **Module interface additions.**
+  - `PlanContext` gains `profile_params`, `tool_details`, `upstream` and `services`.
+  - `RunContext` gains `attempt_dir`, `profile_params`, `tool_details` and `services`.
+  - `ModuleMeta.profile_sections` puts the relevant profile keys into the config fingerprint.
+  - `Module.unavailable_reason()` gives plan-time skips with a reason, e.g. UDP without raw sockets.
+  - `ModuleResult` gains `hosts`, `ports` and `services`.
+- **Classification** happens centrally: an executor post-processing hook applies `config/service_map.yaml` before results are written. A service can have several categories, e.g. WinRM on 5985 is both `http` and `winrm`.
+- **Nmap privileges** come from the tool inventory. `capabilities` adds `--privileged`, `root` adds nothing, and anything else adds `--unprivileged`, uses connect scans, skips UDP and OS detection, and records the reason.
+- **Resumable TCP scan.** `recon.tcp_ports` copies the interrupted attempt's output into the new attempt, rewrites the `-oA` base inside it, and runs `nmap --resume`. The interrupted attempt is never modified.
+- **Range discovery** is an engagement-level run (`executions.target_id` is NULL) under `<engagement>/runs/`.
+  - The scope guard now validates CIDR targets address by address (up to /16), together with `Command.exclude`, which holds the scope exclusions passed to nmap.
+  - Hosts are registered as targets only on request.
+- **Web probe deferral.** The spec's "Stage 5: web service identification" (titles, headers, TLS) moves to Milestone 5 with the HTTP modules. Milestone 4 identifies and classifies web services through Nmap.

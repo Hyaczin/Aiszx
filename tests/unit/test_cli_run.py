@@ -21,7 +21,8 @@ def test_run_history_and_resume(run_cli, capsys):
     assert run_cli("run", "127.0.0.1", "-m", "test.echo", "-m", "test.fail", "-m", "test.after") == 1
     out = capsys.readouterr().out
     assert "ACTION" in out and "[ ok ] test.echo [host]" in out and "[FAIL] test.fail [host]" in out
-    assert "[skip] test.after [host]: upstream test.fail" in out and ": PARTIAL (" in out
+    assert "upstream test.fail did not complete (FAILED)" in out and ": PARTIAL (" in out
+    assert "stage recon:" in out and "stage enumeration:" in out
     run_id = out.split("Run ", 1)[1].split(":", 1)[0]
 
     assert run_cli("history", "127.0.0.1") == 0

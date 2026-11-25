@@ -30,6 +30,7 @@ class ToolResolution:
     launch: list[str]
     version: str | None = None
     problem: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)   # e.g. nmap privileges
 
 
 ToolResolver = Callable[[list[str]], dict[str, ToolResolution]]
@@ -47,6 +48,7 @@ class PlannedUnit:
     needs_approval: bool = False
     tool_launch: dict[str, list[str]] = field(default_factory=dict)
     tool_versions: dict[str, str | None] = field(default_factory=dict)
+    tool_details: dict[str, dict[str, Any]] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     # filled in by the orchestrator
     row_id: str | None = None
@@ -81,7 +83,8 @@ class Planner:
         self.resolve_tools = resolve_tools
 
     def plan(self, modules: list[Module], *, engagement, target, address: str, profile: Profile,
-             roe_max: Safety | None) -> list[PlannedUnit]:
+             roe_max: Safety | None, upstream: dict[str, list[dict[str, Any]]] | None = None,
+             services: list | None = None, blocked: dict[str, str] | None = None) -> list[PlannedUnit]:
         ceiling = effective_ceiling(profile, roe_max)
         names = sorted({t.name for m in modules for t in m.meta.tools})
         tools = self.resolve_tools(names) if names else {}
@@ -97,6 +100,8 @@ class Planner:
                 reason = "disabled in configuration"
             elif meta.safety is Safety.PROHIBITED_AUTO:
                 reason = "prohibited from automatic execution (manual, separately authorised testing only)"
+            elif blocked and meta.id in blocked:
+                reason = blocked[meta.id]
             elif not meta.safety.allowed_under(ceiling):
                 source = "rules of engagement" if roe_max is not None and ceiling == roe_max else f"profile '{profile.name}'"
                 reason = f"safety class {meta.safety.value} exceeds the {source} ceiling ({ceiling.value})"
@@ -105,26 +110,34 @@ class Planner:
 
             launch: dict[str, list[str]] = {}
             versions: dict[str, str | None] = {}
+            details: dict[str, dict[str, Any]] = {}
             missing: list[str] = []
             for req in meta.tools:
                 res = tools.get(req.name, ToolResolution("unknown", [], problem="not in the tool registry"))
                 ok_version = satisfies(res.version, req.min_version) is not False
                 if res.status == "ok" and res.launch and ok_version:
-                    launch[req.name], versions[req.name] = res.launch, res.version
+                    launch[req.name], versions[req.name], details[req.name] = res.launch, res.version, res.detail
                 elif not req.optional:
                     why = res.status if ok_version else f"version {res.version} < {req.min_version}"
                     missing.append(f"{req.name} ({why})")
             if reason is None and missing:
                 reason = f"required tool unavailable: {', '.join(missing)}; see `tools missing`"
 
-            units = module.plan(PlanContext(engagement, target, address, cfg.options))
-            config_fp = fingerprint({"module": meta.id, "version": meta.version, "options": dict(cfg.options)})
+            pctx = PlanContext(engagement, target, address, cfg.options, profile_params=profile.params,
+                               tool_details=details, upstream=upstream or {}, services=list(services or []))
+            if reason is None:
+                reason = module.unavailable_reason(pctx)
+            units = module.plan(pctx)
+            config_fp = fingerprint({
+                "module": meta.id, "version": meta.version, "options": dict(cfg.options),
+                "profile": {sec: profile.params.get(sec) for sec in meta.profile_sections},
+            })
             for unit in units:
                 planned.append(PlannedUnit(
                     module=module, unit=unit, config=cfg,
                     input_fp=fingerprint(dict(unit.inputs)), config_fp=config_fp,
                     state=SKIPPED if reason else PENDING, skip_reason=reason, needs_approval=needs_approval,
-                    tool_launch=launch, tool_versions=versions,
+                    tool_launch=launch, tool_versions=versions, tool_details=details,
                     depends_on=[d for d in meta.depends_on if d in present],
                     decision="skip" if reason else "run", decision_reason=reason or "",
                 ))

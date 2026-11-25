@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import os
 import shlex
 import signal
@@ -48,11 +49,16 @@ class ScopeGuard:
         self._resolved: dict[str, list[str]] = dict(pinned or {})
         self._lock = threading.Lock()
 
-    def check(self, targets) -> None:
+    MAX_RANGE = 65536
+
+    def check(self, targets, exclude=()) -> None:
         validity = self.engagement.validity()
         if validity != ACTIVE:
             raise ScopeViolation(f"engagement '{self.engagement.slug}' is {validity}; refusing to contact targets")
         for raw in targets:
+            if "/" in str(raw):
+                self.check_network(str(raw), exclude)
+                continue
             identity = normalise_target(raw)
             if identity.is_ip:
                 if not self.policy.address_allowed(identity.canonical):
@@ -65,6 +71,37 @@ class ScopeGuard:
             decision = self.policy.evaluate(identity, addresses)
             if not decision.in_scope:
                 raise ScopeViolation(f"{identity.canonical} is not in scope ({'; '.join(decision.reasons)}); command refused")
+
+
+    def check_network(self, cidr: str, exclude=()) -> None:
+        """Every address of the range must be in scope, or be skipped via the command's exclusions."""
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            raise ScopeViolation(f"{cidr!r} is not a valid network") from None
+        if net.num_addresses > self.MAX_RANGE:
+            raise ScopeViolation(f"{net} has {net.num_addresses} addresses; split ranges larger than /16 (IPv4)")
+        def nets(rules):
+            return [ipaddress.ip_network(r.value) for r in rules if r.is_address_rule]
+        inc, exc = nets(self.policy.includes), nets(self.policy.excludes)
+        skipped = []
+        for item in exclude:
+            try:
+                skipped.append(ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                raise ScopeViolation(f"invalid exclusion {item!r}") from None
+        uncovered = 0
+        first = None
+        for addr in net:
+            if any(addr in n for n in skipped if n.version == addr.version):
+                continue
+            allowed = any(addr in n for n in inc if n.version == addr.version) and                 not any(addr in n for n in exc if n.version == addr.version)
+            if not allowed:
+                uncovered += 1
+                first = first or addr
+        if uncovered:
+            raise ScopeViolation(f"{uncovered} address(es) of {net} are out of scope (first: {first}); "
+                                 "the whole range must be covered by include rules, with exclusions passed to the tool")
 
 
 def redact(argv: list[str], secrets) -> list[str]:
@@ -87,7 +124,7 @@ class ToolRunner:
         self.poll_interval = poll_interval
 
     def run(self, cmd: Command, out_dir: Path, default_timeout: int) -> CommandResult:
-        self.guard.check(cmd.targets)  # raises ScopeViolation: nothing is started
+        self.guard.check(cmd.targets, cmd.exclude)  # raises ScopeViolation: nothing is started
         if cmd.tool is not None:
             launch = self.tool_launch.get(cmd.tool)
             if not launch:

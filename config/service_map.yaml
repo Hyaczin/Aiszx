@@ -1,0 +1,75 @@
+# Service classification: maps what nmap reports to Aiszx service categories.
+# Enumeration modules (Milestones 5-6) select services by category.
+#
+# Per category:
+#   names          nmap service names (glob patterns allowed)          → confidence high/medium
+#   ssl_names      names that count only when nmap reports tunnel=ssl (e.g. "http" over TLS = https)
+#   plain_only     true: names match only WITHOUT an ssl tunnel (keeps http vs https apart)
+#   products       product globs that also match (e.g. "Microsoft HTTPAPI*")
+#   ports          usual ports. Used as a low-confidence hint when nmap could not name the
+#                  service, or as a requirement when ports_required is true
+#   ports_required the name/product match must also be on one of `ports` (e.g. WinRM on 5985)
+#
+# A service can have several categories (WinRM on 5985 is both "winrm" and "http").
+# Override or extend in ~/.config/aiszx/service_map.yaml (mappings merge).
+version: 1
+
+categories:
+  http:
+    names: [http, http-alt, http-proxy, "http-*", "*-http", www, sun-answerbook, radan-http]
+    plain_only: true
+    ports: [80, 81, 591, 3000, 5000, 8000, 8008, 8080, 8081, 8888, 9000]
+  https:
+    names: [https, https-alt, "https-*", ssl/http]
+    ssl_names: [http, http-alt, http-proxy, "http-*", www]
+    ports: [443, 4443, 8443, 9443]
+  smb:
+    names: [microsoft-ds, netbios-ssn, smb]
+    ports: [139, 445]
+  ssh:
+    names: [ssh]
+    ports: [22, 2222]
+  ftp:
+    names: [ftp, ftps, ftp-data, ftp-proxy]
+    ports: [21, 990]
+  dns:
+    names: [domain, dns]
+    ports: [53]
+  ldap:
+    names: [ldap, ldaps, ldapssl, "globalcatLDAP*", "msft-gc*"]
+    ports: [389, 636, 3268, 3269]
+  kerberos:
+    names: [kerberos, kerberos-sec, kpasswd5, kpasswd]
+    ports: [88, 464]
+  mssql:
+    names: [ms-sql-s, ms-sql-m, mssql]
+    ports: [1433, 1434]
+  mysql:
+    names: [mysql, mariadb]
+    ports: [3306]
+  postgresql:
+    names: [postgresql, postgres]
+    ports: [5432]
+  rdp:
+    names: [ms-wbt-server, rdp]
+    ports: [3389]
+  winrm:
+    names: [http, https, wsman, wsmans, winrm]
+    products: ["Microsoft HTTPAPI*"]
+    ports: [5985, 5986]
+    ports_required: true
+  nfs:
+    names: [nfs, nfs_acl, mountd, rpcbind]
+    ports: [111, 2049]
+  snmp:
+    names: [snmp, snmptrap]
+    ports: [161, 162]
+  smtp:
+    names: [smtp, smtps, submission]
+    ports: [25, 465, 587]
+  rpc:
+    names: [msrpc, ncacn_http, epmap]
+    ports: [135, 593]
+  vnc:
+    names: ["vnc*"]
+    ports: [5900, 5901]

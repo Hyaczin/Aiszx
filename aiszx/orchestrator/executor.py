@@ -92,6 +92,7 @@ class Executor:
         acquire: Callable[[PlannedUnit], tuple[bool, str | None]],
         heartbeat: Callable[[], None],
         heartbeat_seconds: float,
+        postprocess: Callable[[PlannedUnit, ModuleResult], None] | None = None,
     ) -> None:
         self.max_workers = max(1, max_workers)
         self.runner = runner
@@ -101,6 +102,7 @@ class Executor:
         self.acquire = acquire
         self.heartbeat = heartbeat
         self.heartbeat_seconds = heartbeat_seconds
+        self.postprocess = postprocess
         self.events: queue.Queue = queue.Queue()
 
     # -- main loop (main thread) ---------------------------------------------
@@ -203,7 +205,7 @@ class Executor:
             (adir / "parsed").mkdir(parents=True, exist_ok=True)
             self.events.put(AttemptStarted(pu, attempt, adir))
             t0 = time.monotonic()
-            uctx = dataclasses.replace(ctx, previous_attempt_dir=previous)
+            uctx = dataclasses.replace(ctx, previous_attempt_dir=previous, attempt_dir=adir)
             out = self._attempt(pu, uctx, adir)
             self.events.put(AttemptFinished(pu, attempt, adir, out.status, out.error_class, out.error_message,
                                             out.exit_code, time.monotonic() - t0, out.commands, out.result))
@@ -261,6 +263,12 @@ class Executor:
             out.error_class, out.error_message = PERMANENT, f"parse failed: {exc!r} (raw output kept)"
             _write_traceback(adir)
             return out
+        if self.postprocess is not None:
+            try:
+                self.postprocess(pu, result)
+            except Exception as exc:
+                out.error_class, out.error_message = PERMANENT, f"post-processing failed: {exc!r}"
+                return out
         atomic_write_text(adir / "parsed" / "result.json", result.to_json(module.meta.id, unit.key))
         problems = module.validate_outputs(unit, adir)
         if problems:

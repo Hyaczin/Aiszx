@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence
 
+from aiszx.modules.records import HostRecord, PortRecord, ServiceRecord
+
 if TYPE_CHECKING:
     from aiszx.targets.engagements import Engagement
     from aiszx.targets.manager import Target
@@ -102,6 +104,7 @@ class ModuleMeta:
     ok_exit_codes: tuple[int, ...] = (0,)
     max_parallel: int | None = None      # limit concurrent units of this module
     config_defaults: Mapping[str, Any] = field(default_factory=dict)
+    profile_sections: tuple[str, ...] = ()  # profile keys (e.g. "nmap") that shape output: part of the config fingerprint
 
     @property
     def family(self) -> str:
@@ -124,6 +127,7 @@ class Command:
     timeout: int | None = None       # defaults to the module timeout
     env: Mapping[str, str] = field(default_factory=dict)
     redact: Sequence[str] = ()       # secrets to mask in logs and stored command lines
+    exclude: Sequence[str] = ()      # addresses/CIDRs the tool is told to skip (range scans: scope exclusions)
     ok_exit_codes: tuple[int, ...] | None = None  # defaults to the module's
 
 
@@ -159,11 +163,16 @@ class ModuleResult:
     limitations: list[str] = field(default_factory=list)
     evidence_descriptions: dict[str, str] = field(default_factory=dict)  # file name → description
     sensitive_files: list[str] = field(default_factory=list)            # file names to mark sensitive
+    hosts: list[HostRecord] = field(default_factory=list)                # persisted to discovered_hosts
+    ports: list[PortRecord] = field(default_factory=list)                # persisted to discovered_ports
+    services: list[ServiceRecord] = field(default_factory=list)          # persisted to services
 
     def to_json(self, module_id: str, unit_key: str) -> str:
         return json.dumps({
             "module": module_id, "unit": unit_key, "summary": self.summary, "artifacts": self.artifacts,
             "observations": self.observations, "limitations": self.limitations,
+            "hosts": [h.to_dict() for h in self.hosts], "ports": [p.to_dict() for p in self.ports],
+            "services": [s.to_dict() for s in self.services],
         }, indent=2, sort_keys=True, default=str)
 
 
@@ -173,6 +182,10 @@ class PlanContext:
     target: "Target"
     address: str
     options: Mapping[str, Any]
+    profile_params: Mapping[str, Any] = field(default_factory=dict)
+    tool_details: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    upstream: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)  # completed results in this run
+    services: list[ServiceRecord] = field(default_factory=list)                 # known services of the target
 
 
 @dataclass
@@ -190,10 +203,18 @@ class RunContext:
     upstream: Mapping[str, list[dict[str, Any]]]   # module id → parsed results of completed units in this run
     cancel_event: threading.Event
     previous_attempt_dir: Path | None = None
+    attempt_dir: Path | None = None                       # this attempt's directory (raw/ and parsed/ inside)
+    profile_params: Mapping[str, Any] = field(default_factory=dict)
+    tool_details: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    services: list[ServiceRecord] = field(default_factory=list)
 
 
 class Module(abc.ABC):
     meta: ClassVar[ModuleMeta]
+
+    def unavailable_reason(self, ctx: PlanContext) -> str | None:
+        """Return why this module cannot run in this context (unit becomes SKIPPED), or None."""
+        return None
 
     def plan(self, ctx: PlanContext) -> list[WorkUnit]:
         """Default: one unit for the target host."""
