@@ -8,7 +8,7 @@ Layers, lowest to highest precedence:
 
 Mappings merge recursively; lists and scalars replace. The merged result is
 validated strictly: unknown keys are errors (catches typos), types are checked.
-Per-engagement overrides are added with the orchestrator in Milestone 3.
+Module and profile settings (with per-engagement overrides) live in aiszx/orchestrator/settings.py.
 """
 
 from __future__ import annotations
@@ -69,6 +69,13 @@ FRAMEWORK_SCHEMA: dict[str, Any] = {
         "backup_count": int,
     },
     "engagements": {"default_slug": str},
+    "orchestrator": {
+        "max_workers": int,
+        "heartbeat_seconds": int,
+        "stale_after_seconds": int,
+        "kill_grace_seconds": int,
+        "default_profile": str,
+    },
     "scope": {"resolve_hostnames": bool, "strict_hostname_resolution": bool},
     "workspace": {
         "dir_mode": str,
@@ -177,6 +184,15 @@ class WorkspaceConfig:
 
 
 @dataclass(frozen=True)
+class OrchestratorConfig:
+    max_workers: int
+    heartbeat_seconds: int
+    stale_after_seconds: int
+    kill_grace_seconds: int
+    default_profile: str
+
+
+@dataclass(frozen=True)
 class FrameworkConfig:
     data_dir: Path
     user_config_dir: Path
@@ -185,6 +201,7 @@ class FrameworkConfig:
     logging: LoggingConfig
     scope: ScopeConfig
     workspace: WorkspaceConfig
+    orchestrator: OrchestratorConfig
     raw: Mapping[str, Any]
 
     @property
@@ -233,6 +250,12 @@ def _build(merged: dict[str, Any], *, data_dir: Path, user_config_dir: Path, sou
     except Exception as exc:  # ValidationError → ConfigError with location
         raise ConfigError(f"engagements.default_slug: {exc}") from None
 
+    oc = merged["orchestrator"]
+    if min(oc["max_workers"], oc["heartbeat_seconds"], oc["stale_after_seconds"]) < 1 or oc["kill_grace_seconds"] < 0:
+        raise ConfigError("orchestrator: max_workers, heartbeat_seconds and stale_after_seconds must be >= 1")
+    if oc["stale_after_seconds"] <= oc["heartbeat_seconds"]:
+        raise ConfigError("orchestrator.stale_after_seconds must be greater than heartbeat_seconds")
+
     lg = merged["logging"]
     if lg["max_bytes"] < 0 or lg["backup_count"] < 0:
         raise ConfigError("logging.max_bytes and logging.backup_count must be >= 0")
@@ -252,6 +275,7 @@ def _build(merged: dict[str, Any], *, data_dir: Path, user_config_dir: Path, sou
             protected_subdirs=protected,
             enumeration_categories=tuple(ws["enumeration_categories"]),
         ),
+        orchestrator=OrchestratorConfig(**oc),
         raw=merged,
     )
 

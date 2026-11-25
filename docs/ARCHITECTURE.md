@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestone 1 and Milestone 2 implemented.
+**Status:** Approved 2026-11-25. Milestones 1 to 3 implemented. Implementation notes for Milestone 3 are in §13.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -950,3 +950,22 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 | **9** | **Hardening & deployment** | `install.sh` (venv, deps, init, tool check, no silent installs), integration tests with local services (python http.server, a local SSH/FTP/SMB where available), recovery chaos tests (kill -9 mid-run), docs, fresh Parrot validation checklist. | integration suite, kill/resume tests, installer dry-run. |
 
 `full TARGET --profile X` is available from Milestone 4 (recon only) and grows as each stage lands.
+
+---
+
+## 13. Milestone 3 implementation notes (deviations and refinements)
+
+- **Package layout.** The orchestrator lives in `aiszx/orchestrator/` (planner, executor, toolrunner, state, locks, recovery, settings, runlog, fingerprint, procutil) instead of `aiszx/core/`, to keep `core` free of execution logic.
+- **Schema.** Migration `0003_orchestrator.sql` adds `modules`, `executions`, `module_executions`, `module_attempts`, `evidence`, `approvals`, `locks` and `execution_logs`.
+  - `executions.id` is a UUID; the directory name is in `run_id`.
+  - `evidence` has no `service_id` yet; Milestone 4 adds it with `ALTER TABLE` once `services` exists.
+  - `module_executions` gains `needs_approval`, `inputs_json`, `outputs_json` (path, SHA-256 and size of the successful attempt) and `summary`.
+- **Resume** continues the same run (same `run_id` and directory). Re-runs always use a new `attempt-NN` directory. Completed units are reused only when §7.5's checks pass.
+- **Built-in module.** `core.connectivity` (`ip route get` plus `ping`) is a real pre-flight check rather than a placeholder. The tools `ping` and `ip` were added to `config/tools.yaml`.
+- **Configuration.**
+  - `config/modules.yaml` and `config/profiles.yaml` are layered as shipped, then user, then `<engagement>/overrides.yaml`.
+  - Profiles carry only `max_safety` for now; scan parameters arrive with Nmap.
+  - Rules of engagement can lower the ceiling: `engagement update --max-safety`.
+- **Approvals.** `intrusive` units need an interactive approval or `--approve <module>`; `--yes` never approves them. Every decision is stored in `approvals`.
+- **Observations** are written to `parsed/result.json` for now; a database table follows in Milestone 7.
+- **CLI.** Milestone 3 adds `run`, `resume`, `history`, `modules list|show` and `engagement update`.

@@ -1,0 +1,21 @@
+# Execution profiles (shipped defaults). Override in ~/.config/aiszx/profiles.yaml
+# or per engagement in overrides.yaml under `profiles:`.
+#
+# max_safety is the most aggressive safety class a profile may run automatically:
+#   passive < active_safe < active_noisy < intrusive
+# Modules above the ceiling are SKIPPED with the reason recorded. "intrusive" modules
+# additionally need explicit approval every run (interactive prompt or --approve <module>).
+# An engagement's rules of engagement (`engagement update --max-safety`) can lower the
+# ceiling further. Scan parameters per profile are added with Nmap in Milestone 4.
+version: 1
+
+profiles:
+  conservative:
+    description: Low-noise checks only
+    max_safety: active_safe
+  standard:
+    description: Normal enumeration, including noisy content discovery
+    max_safety: active_noisy
+  comprehensive:
+    description: Everything available; intrusive modules still need explicit approval
+    max_safety: intrusive

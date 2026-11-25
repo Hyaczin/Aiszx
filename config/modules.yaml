@@ -1,0 +1,21 @@
+# Per-module settings (shipped defaults).
+#
+# Override in ~/.config/aiszx/modules.yaml, or per engagement in
+# <data>/engagements/<engagement>/overrides.yaml under a `modules:` key.
+#
+#   modules:
+#     <module id>:
+#       enabled: true|false
+#       timeout: <seconds>
+#       retry: {max_attempts: 2, backoff_seconds: 5}
+#       options: {...}            # module-specific; see `python3 pentest.py modules show <id>`
+#
+# Changing a module's options changes its configuration fingerprint, so `resume`
+# re-runs it instead of reusing old results.
+version: 1
+
+modules:
+  core.connectivity:
+    options:
+      count: 2
+      wait_seconds: 2

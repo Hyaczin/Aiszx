@@ -30,6 +30,19 @@ def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -
     ls.add_argument("--json", action="store_true")
     ls.set_defaults(handler=cmd_list)
 
+    up = esub.add_parser("update", parents=[common], help="change metadata, validity window or rules of engagement")
+    up.add_argument("slug", nargs="?", help="engagement (default: -e or the default engagement)")
+    up.add_argument("--name")
+    up.add_argument("--description")
+    up.add_argument("--auth-ref", dest="authorisation_ref")
+    up.add_argument("--valid-from")
+    up.add_argument("--valid-until")
+    up.add_argument("--max-safety", choices=("passive", "active_safe", "active_noisy", "intrusive"),
+                    help="rules of engagement: most aggressive module safety class allowed (lowers any profile)")
+    up.add_argument("--clear", action="append", default=[], choices=("valid_from", "valid_until", "max_safety"),
+                    help="remove a setting; repeatable")
+    up.set_defaults(handler=cmd_update)
+
     sh = esub.add_parser("show", parents=[common], help="show one engagement")
     sh.add_argument("slug", nargs="?", help="engagement (default: -e or the default engagement)")
     sh.add_argument("--json", action="store_true")
@@ -50,6 +63,19 @@ def cmd_add(ctx: AppContext, args: argparse.Namespace) -> int:
         scope.write_mirror(eng)
         print(f"Imported {len(result.added)} scope rule(s) from {args.scope_file}")
     print(f"Use it with: python3 pentest.py -e {eng.slug} target add <host>")
+    return 0
+
+
+def cmd_update(ctx: AppContext, args: argparse.Namespace) -> int:
+    slug = args.slug or args.engagement or ctx.config.default_engagement
+    eng = ctx.engagements().update(
+        slug, name=args.name, description=args.description, authorisation_ref=args.authorisation_ref,
+        valid_from=args.valid_from, valid_until=args.valid_until, max_safety=args.max_safety,
+        clear=tuple(args.clear),
+    )
+    print(f"Engagement '{eng.slug}'")
+    print(kv([("validity", eng.validity()), ("valid from", eng.valid_from), ("valid until", eng.valid_until),
+              ("max safety (RoE)", eng.roe.get("max_safety")), ("authorisation", eng.authorisation_ref)]))
     return 0
 
 
@@ -83,6 +109,7 @@ def cmd_show(ctx: AppContext, args: argparse.Namespace) -> int:
     print(kv([
         ("name", eng.name), ("description", eng.description), ("authorisation", eng.authorisation_ref),
         ("valid from", eng.valid_from), ("valid until", eng.valid_until), ("validity", eng.validity()),
+        ("max safety (RoE)", eng.roe.get("max_safety")),
         ("scope rules", len(rules)),
         ("targets", f"{sum(t.status == 'active' for t in targets)} active, {sum(t.status == 'archived' for t in targets)} archived"),
         ("workspace", ctx.layout.engagement_dir(eng.slug)), ("created", eng.created_at),

@@ -23,7 +23,7 @@ from aiszx.core.config import LoggingConfig
 
 LOGGER_NAME = "aiszx"
 _TARGET_DIR_ATTR = "aiszx_target_log_dir"
-_CONTEXT_KEYS = ("engagement", "target", "run_id", "module")
+_CONTEXT_KEYS = ("engagement", "target", "run_id", "module_id")
 
 
 def get_logger(name: str | None = None) -> logging.Logger:

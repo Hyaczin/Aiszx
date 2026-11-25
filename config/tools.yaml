@@ -182,11 +182,30 @@ tools:
     binaries: [getcap]
     apt: libcap2-bin
 
+  ping:
+    description: ICMP echo (connectivity pre-flight)
+    binaries: [ping]
+    apt: iputils-ping
+    version_cmd: [-V]
+    version_regex: 'iputils[- ](\S+)'
+
+  ip:
+    description: Routing table lookups (which interface reaches the target; no packets sent)
+    binaries: [ip]
+    known_paths: [/usr/sbin/ip, /sbin/ip]
+    apt: iproute2
+    version_cmd: [-V]
+    version_regex: 'iproute2[- ](?:ss)?(\d[\w.]*)'
+
 # What each group of future modules needs. `tools check` reports readiness.
 #   requires      all must be available
 #   requires_any  at least one must be available
 #   optional      improves coverage; missing ones only degrade the capability
 capabilities:
+  preflight.connectivity:
+    description: Route and ICMP reachability check before scanning (core.connectivity)
+    requires: [ping]
+    optional: [ip]
   recon.nmap:
     description: Host discovery, TCP/UDP port scanning, service identification (M4)
     requires: [nmap]

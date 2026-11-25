@@ -132,6 +132,62 @@ class EngagementStore:
         self.write_mirror(eng)
         return eng
 
+    def update(
+        self,
+        slug: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        authorisation_ref: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        max_safety: str | None = None,
+        clear: tuple[str, ...] = (),
+    ) -> Engagement:
+        """Update metadata. ``clear`` may contain valid_from, valid_until, max_safety."""
+        eng = self.get(slug)
+        fields: dict[str, object] = {}
+        if name is not None:
+            fields["name"] = name
+        if description is not None:
+            fields["description"] = description
+        if authorisation_ref is not None:
+            fields["authorisation_ref"] = authorisation_ref
+        if valid_from is not None:
+            fields["valid_from"] = parse_bound(valid_from, end=False)
+        if valid_until is not None:
+            fields["valid_until"] = parse_bound(valid_until, end=True)
+        for key in ("valid_from", "valid_until"):
+            if key in clear:
+                fields[key] = None
+        roe = dict(eng.roe)
+        if max_safety is not None:
+            from aiszx.modules.base import Safety
+
+            allowed = [s.value for s in Safety if s is not Safety.PROHIBITED_AUTO]
+            if max_safety not in allowed:
+                raise ValidationError(f"--max-safety must be one of {', '.join(allowed)}")
+            roe["max_safety"] = max_safety
+        if "max_safety" in clear:
+            roe.pop("max_safety", None)
+        if roe != eng.roe:
+            fields["roe_json"] = json.dumps(roe, sort_keys=True)
+        vf = fields.get("valid_from", eng.valid_from)
+        vu = fields.get("valid_until", eng.valid_until)
+        if vf and vu and parse_iso(str(vf)) > parse_iso(str(vu)):
+            raise ValidationError("valid_from must not be later than valid_until")
+        if not fields:
+            return eng
+        fields["updated_at"] = iso()
+        with self.db.transaction():
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            self.db.execute(f"UPDATE engagements SET {sets} WHERE id = ?", [*fields.values(), eng.id])
+            record_event(self.db, "engagement.update", actor=self.actor, engagement_id=eng.id,
+                         changes={k: v for k, v in fields.items() if k != "updated_at"})
+        updated = self.get(slug)
+        self.write_mirror(updated)
+        return updated
+
     def ensure(self, slug: str) -> tuple[Engagement, bool]:
         existing = self.find(slug)
         if existing:

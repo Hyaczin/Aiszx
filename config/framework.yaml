@@ -21,6 +21,13 @@ logging:
 engagements:
   default_slug: default   # used when -e/--engagement is not given
 
+orchestrator:
+  max_workers: 4            # units executed concurrently
+  heartbeat_seconds: 15     # how often a running process proves it is alive
+  stale_after_seconds: 300  # a run from another host is considered dead after this long without a heartbeat
+  kill_grace_seconds: 5     # SIGTERM → SIGKILL delay when stopping a tool (timeout or Ctrl+C)
+  default_profile: standard # see config/profiles.yaml
+
 scope:
   resolve_hostnames: true
   # true: a hostname target is in scope only if EVERY resolved address is covered

@@ -24,9 +24,11 @@ def tools_cli(cli, monkeypatch, fakehost, fakerunner, test_registry_dir):
     return cli
 
 
-def test_init_applies_tools_migration(tools_cli, capsys):
+def test_init_is_up_to_date_after_all_migrations(tools_cli, capsys):
+    from aiszx.db.migrate import latest_version
+
     assert tools_cli("init") == 0
-    assert "schema v2 (up to date)" in capsys.readouterr().out
+    assert f"schema v{latest_version()} (up to date)" in capsys.readouterr().out
 
 
 def test_tools_inventory(tools_cli, capsys, tmp_path):

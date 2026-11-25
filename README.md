@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 2 (Tool management) complete.** You can manage engagements, scope, targets and workspaces, and inventory, check and install the security tools Aiszx uses. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); tool management is described in [docs/TOOLS.md](docs/TOOLS.md).
+> **Status: Milestone 3 (Orchestrator) complete.** You can manage engagements, scope, targets and workspaces; inventory, check and install tools; and run modules with checkpoints, retries, crash recovery and resume. The only module so far is the built-in `core.connectivity` reachability check. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
 
 ---
 
@@ -201,6 +201,45 @@ python3 pentest.py tools nmap-caps --apply  # one-time: lets nmap do SYN/UDP/OS 
 ```
 See [docs/TOOLS.md](docs/TOOLS.md) for detection rules, the install policy, the nmap capability trade-offs and how to add your own tools (including pyenv Python 2.7 tools).
 
+### Running modules, history and resume
+
+```bash
+python3 pentest.py modules list                                  # available modules, safety class, tools
+python3 pentest.py -e htb-box-reset run 10.129.73.247 -m core.connectivity
+python3 pentest.py -e htb-box-reset history 10.129.73.247        # all runs of the target
+python3 pentest.py -e htb-box-reset history 10.129.73.247 --run 2026-11-25_160000
+python3 pentest.py -e htb-box-reset resume 10.129.73.247         # continue the last run
+```
+```
+$ python3 pentest.py -e htb-box-reset run 10.129.73.247 -m core.connectivity
+Run 2026-11-25_160000: 10.129.73.247 (engagement htb-box-reset, profile standard)
+  address   : 10.129.73.247
+  workspace : /home/user/.local/share/aiszx/engagements/htb-box-reset/targets/10.129.73.247/runs/2026-11-25_160000
+  MODULE             UNIT  SAFETY       ACTION  NOTE
+  -----------------  ----  -----------  ------  ----
+  core.connectivity  host  active_safe  run
+
+[ ok ] core.connectivity [host] (1.2s): route via tun0 (src 10.10.14.5); ICMP 2/2 replies, avg 26.05 ms
+
+Run 2026-11-25_160000: COMPLETED (1 completed)
+```
+
+What happens on every run:
+- **Preflight.** The engagement must be inside its validity window. The target is re-resolved and re-checked against scope, and the address used is pinned and recorded in `<run>/scope/scope.json`.
+- **Plan.** Each module is checked against the safety ceiling (profile `max_safety`, lowered by `engagement update --max-safety`) and against its required tools. Anything that can't run is **skipped with the reason shown**. `intrusive` modules need explicit approval every run: an interactive prompt, or `--approve MODULE`. `--yes` deliberately does **not** approve them.
+- **Execute.**
+  - Every command is checked against scope immediately before it starts.
+  - Output streams to `attempt-NN/raw/`.
+  - Timeouts kill the whole process tree.
+  - Transient errors (e.g. "Network is unreachable") are retried with backoff.
+  - A failed module doesn't stop unrelated ones; only modules that depend on it are skipped.
+- **Checkpoint and evidence.** Unit states are stored in SQLite as they change. Every output file (failed attempts included) is hashed and registered as evidence, and `<run>/manifest.json` is updated.
+- **Ctrl+C.** The first press stops running tools, keeps partial output and marks the run `INTERRUPTED`. A second press forces an exit.
+
+`resume` verifies every completed unit before reusing it: files present, SHA-256 unchanged, same inputs, options and module version. It shows what it will reuse or re-run and asks first. Runs whose process died (crash, reboot, killed terminal) are detected automatically and marked `INTERRUPTED`. Nothing is ever overwritten: re-runs go to a new `attempt-NN` directory.
+
+Profiles: `conservative` (up to `active_safe`), `standard` (default, up to `active_noisy`) and `comprehensive` (up to `intrusive`, still with approval). They are defined in `config/profiles.yaml`. Module options go in `config/modules.yaml`, or in `~/.config/aiszx/modules.yaml`, or per engagement in `<data>/engagements/<e>/overrides.yaml`.
+
 ### Workspaces
 
 ```bash
@@ -226,7 +265,9 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - Runtime data lives in `~/.local/share/aiszx`, not inside the repository.
 - The tool registry is `config/tools.yaml` (overridable like every other config file), with code in `aiszx/tools/`.
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
-- Commands not yet implemented (`recon`, `enumerate`, `assess`, `report`, `full`, `resume`, `history`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
+- `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` will be shortcuts over it from Milestone 4.
+- `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
+- Commands not yet implemented (`recon`, `enumerate`, `assess`, `report`, `full`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
 
 ## Development
 
@@ -246,7 +287,9 @@ aiszx/core/           config, logging, errors, time/ids/fs helpers, audit trail
 aiszx/db/             SQLite connection, migrations (aiszx/db/migrations/NNNN_*.sql)
 aiszx/targets/        identity, scope rules, engagements, target manager, workspace layout
 aiszx/tools/          tool registry, inventory/probes, health checks, capabilities, installer, nmap caps
-config/               shipped defaults (framework.yaml, tools.yaml) + templates
+aiszx/modules/        module interface (base.py), discovery (registry.py), built-in modules (core/)
+aiszx/orchestrator/   planner, executor, tool runner + scope guard, state, locks, recovery/resume, settings
+config/               shipped defaults (framework, tools, modules, profiles) + templates
 tests/unit/           pytest suite
 docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadmap
 ```
@@ -257,8 +300,8 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 |---|-----------|--------|
 | 1 | Foundation: CLI, engagements, scope, targets, workspaces, SQLite, logging | **done** |
 | 2 | Tool management: Parrot tool inventory (APT/dpkg/PATH/pipx/pyenv/go/git), versions, health checks, install plans, nmap `setcap` step | **done** |
-| 3 | Orchestrator: module interface, execution states, checkpoints, retries, resume, locks | next |
-| 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | |
+| 3 | Orchestrator: module interface, execution states, checkpoints, retries, resume, locks | **done** |
+| 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | next |
 | 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | |
 | 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | |
 | 7 | Assessment: findings, correlation, confidence, investigation paths | |
@@ -269,17 +312,11 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 
 After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 2)
+## Current limitations (Milestone 3)
 
-- Tool detection uses the shipped registry (22 tools). Tools outside it are not detected until you add them in `~/.config/aiszx/tools.yaml`.
-- Some tools have no reliable version flag (EyeWitness, Nikto, enum4linux-ng, dnsrecon, impacket); their version comes from the APT or pipx package. If a tool is a plain git checkout, `tools show` reports its commit instead.
-- The health check confirms that a tool starts and reports a version. Whether it actually works against a target (e.g. EyeWitness's browser driver) is checked by each module before it runs (Milestone 5 onward).
-- Capability readiness is per module group. Exact per-module requirements arrive with the module interface (Milestone 3).
-
-- No scanning or enumeration yet. The framework manages scope, targets and workspaces only.
-- The engagement validity window is recorded and shown, and registration warns outside it. Enforcement at execution time arrives with the orchestrator (M3).
-- Rules of engagement (`roe_json`) exist in the schema but have no CLI yet (M3, with safety classes).
-- Per-run and per-module logs, and per-engagement configuration overrides, arrive in M3.
-- Hostname resolution uses the system resolver, which has no timeout control. Use `--no-resolve` if DNS is slow.
-- Scope rules support IPs, CIDRs, hostnames and `*.domain`. IP ranges such as `10.0.0.1-50` are not supported; use CIDRs.
+- The only module is `core.connectivity`. Port scanning and service enumeration modules arrive in Milestones 4 to 6.
+- Module observations are stored in each unit's `parsed/result.json`. They move into a database table when the assessment engine needs them (Milestone 7).
+- The engagement validity window and per-command scope are enforced at run time. Scope rules are not yet applied to CIDR-range discovery runs (Milestone 4).
+- Resource usage is recorded as duration per command. CPU and memory per tool are not measured.
+- On a forced exit (second Ctrl+C or a killed terminal) the units that were running are marked `INTERRUPTED` on the next start. Their partial raw output is always kept.
 - POSIX permission checks are skipped when running on Windows (development only).

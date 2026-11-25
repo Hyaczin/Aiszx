@@ -98,6 +98,18 @@ class AppContext:
     def tool_inventory(self, registry: ToolRegistry | None = None) -> ToolInventory:
         return ToolInventory(registry or self.tool_registry(), self.runner(), self.host())
 
+    # -- orchestration -------------------------------------------------------
+    def module_registry(self):
+        from aiszx.modules.registry import discover
+
+        return discover()
+
+    def orchestrator(self, **kwargs):
+        from aiszx.orchestrator.orchestrator import Orchestrator
+
+        kwargs.setdefault("registry", self.module_registry())
+        return Orchestrator(self, **kwargs)
+
     def close(self) -> None:
         if self._db is not None:
             self._db.close()
