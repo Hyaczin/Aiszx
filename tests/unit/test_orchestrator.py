@@ -1,5 +1,4 @@
 import json
-import subprocess
 import sys
 import threading
 import time
@@ -196,9 +195,9 @@ def test_cancel_interrupts_and_resume_completes(app, registry):
 
 
 def dead_pid():
-    proc = subprocess.Popen([sys.executable, "-c", "pass"])
-    proc.wait()
-    return proc.pid
+    # Far above Linux pid_max (4194304) and not a valid Windows PID: can never be alive or reused.
+    # (A just-exited child's PID is NOT safe: Windows reuses PIDs quickly, which made tests flaky.)
+    return 999_999_999
 
 
 def test_crash_is_detected_and_resumed(app, registry):
