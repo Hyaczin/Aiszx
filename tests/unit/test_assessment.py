@@ -112,6 +112,19 @@ def test_exploitdb_hypotheses(fakerunner):
     assert drafts[0].service_key == "tcp/22" and "text match only" in drafts[0].description
 
 
+def test_exploitdb_merges_same_product_from_nmap_and_whatweb():
+    # Seen on a real box: nmap says "Apache httpd 2.4.52", WhatWeb says "Apache 2.4.52" → one hypothesis.
+    k = Knowledge(TARGET, services=[ServiceRecord(TARGET, "tcp", 80, name="http", product="Apache httpd",
+                                                  version="2.4.52")],
+                  technologies=[{"name": "Apache", "version": "2.4.52", "endpoint_url": "http://10.129.73.247/"},
+                                {"name": "Apache", "version": "2.4.52", "endpoint_url": "http://10.129.73.247/"},
+                                {"name": "Apache", "version": "2.4.58", "endpoint_url": "http://other/"}])
+    ps = exploitdb.products(k)
+    assert [(p.name, p.version, p.where) for p in ps] == [("Apache httpd", "2.4.52", "tcp/80"),
+                                                         ("Apache", "2.4.58", "http://other/")]
+    assert ps[0].also == ("http://10.129.73.247/",)
+
+
 # --- engine end to end -------------------------------------------------------------------
 
 @pytest.fixture
