@@ -225,3 +225,11 @@ def test_cli_enumerate_and_web(cli, monkeypatch, tmp_path, capsys):
     assert "Admin & Login" in out and "Apache 2.4.52" in out and "/backup" in out
     assert "http.cookie_flags" in out
     assert cli("enumerate", TARGET, "--vhost", "bad_host") == 2
+
+
+def test_clip_list_at_item_boundary():
+    from aiszx.cli.commands.enum_cmd import _clip
+
+    techs = "Apache 2.4.52, Bootstrap, Cookies, HTTPServer, JQuery 3.6.0, PasswordField"
+    assert _clip(techs, 100) == techs
+    assert _clip(techs, 60) == "Apache 2.4.52, Bootstrap, Cookies, HTTPServer, JQuery 3.6.0 …"

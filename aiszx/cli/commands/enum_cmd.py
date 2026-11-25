@@ -29,6 +29,14 @@ def vhost_list(values: list[str]) -> list[str]:
     return out
 
 
+def _clip(text: str, width: int) -> str:
+    """Shorten a comma-separated list at an item boundary, marking the cut with '…'."""
+    if len(text) <= width:
+        return text
+    cut = text[: width - 1].rsplit(", ", 1)[0]
+    return cut + " …"
+
+
 def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -> None:
     e = sub.add_parser(
         "enumerate", parents=[common], help="enumerate the target's known services (run `recon` first)",
@@ -106,7 +114,7 @@ def cmd_web(ctx: AppContext, args: argparse.Namespace) -> int:
         return 0
     print(f"Web results of {target.canonical} (run {run_id})")
     print(table([(e["url"], e["status_code"] or "-", (e["title"] or "-")[:40], (e["server"] or "-")[:30],
-                  ", ".join(techs.get(e["url"], []))[:60] or "-") for e in web["endpoints"]],
+                  _clip(", ".join(techs.get(e["url"], [])), 60) or "-") for e in web["endpoints"]],
                 ("URL", "STATUS", "TITLE", "SERVER", "TECHNOLOGIES")))
     if web["resources"]:
         print("\nPaths:")
