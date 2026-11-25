@@ -73,3 +73,8 @@ categories:
   vnc:
     names: ["vnc*"]
     ports: [5900, 5901]
+  rservices:                      # rexec / rlogin / rsh (legacy, cleartext, host-based trust)
+    names: [exec, login, shell, rexec, rlogin, rsh]
+    products: ["*rexecd*", "*rlogind*", "*rshd*"]
+    ports: [512, 513, 514]
+    ports_required: true          # "login"/"shell" are too generic to trust on other ports
