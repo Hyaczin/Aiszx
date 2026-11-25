@@ -78,11 +78,14 @@ class ExecutionStore:
         return self.db.query("SELECT * FROM executions WHERE target_id = ? ORDER BY started_at DESC, run_id DESC",
                              (target_id,))
 
-    def find_run(self, target_id: str, run_id: str | None):
+    def find_run(self, target_id: str, run_id: str | None, commands: tuple[str, ...] | None = None):
         if run_id:
             return self.db.query_one("SELECT * FROM executions WHERE target_id = ? AND run_id = ?", (target_id, run_id))
-        return self.db.query_one(
-            "SELECT * FROM executions WHERE target_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 1", (target_id,))
+        sql, params = "SELECT * FROM executions WHERE target_id = ?", [target_id]
+        if commands:
+            sql += f" AND command IN ({','.join('?' * len(commands))})"
+            params += list(commands)
+        return self.db.query_one(sql + " ORDER BY started_at DESC, run_id DESC LIMIT 1", params)
 
     # -- units ---------------------------------------------------------------
     def insert_unit(self, **fields: Any) -> str:

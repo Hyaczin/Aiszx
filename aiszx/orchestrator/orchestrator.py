@@ -66,6 +66,9 @@ from aiszx.targets.engagements import ACTIVE, Engagement
 from aiszx.targets.manager import Target
 
 
+RESUMABLE_COMMANDS = ("run", "recon", "enumerate", "full")
+
+
 @dataclass
 class RunReport:
     execution_id: str
@@ -206,9 +209,11 @@ class Orchestrator:
     def resume(self, engagement_slug: str, target_raw: str, *, run_id: str | None = None) -> RunReport:
         messages = self.reconcile()
         eng, target = self._load(engagement_slug, target_raw)
-        ex = self.store.find_run(target.id, run_id)
+        ex = self.store.find_run(target.id, run_id, commands=RESUMABLE_COMMANDS)
         if ex is None:
             raise NotFoundError(f"no run {'`' + run_id + '` ' if run_id else ''}found for {target.canonical}")
+        if ex["command"] not in RESUMABLE_COMMANDS:
+            raise AiszxError(f"run {ex['run_id']} is a `{ex['command']}` run, which is not resumable; re-run the command")
         if ex["status"] == EXEC_RUNNING:
             raise AiszxError(f"run {ex['run_id']} is still running (pid {ex['owner_pid']} on {ex['owner_host']})")
         snapshot = json.loads(ex["config_snapshot"])

@@ -64,7 +64,7 @@ def cmd_recon(ctx: AppContext, args: argparse.Namespace) -> int:
     eng = ctx.engagements().get(engagement_slug(ctx, args))
     target = ctx.targets().get(eng, args.target)
     prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
-    last = ExecutionStore(ctx.db).find_run(target.id, None)
+    last = ExecutionStore(ctx.db).find_run(target.id, None, commands=("recon", "full"))
     if (last is not None and not args.force and last["command"] in ("recon", "full")
             and last["status"] in (EXEC_INTERRUPTED, EXEC_PARTIAL, EXEC_FAILED)):
         raise AiszxError(f"the last {last['command']} run {last['run_id']} is {last['status']}; continue it with "
@@ -82,8 +82,13 @@ def cmd_recon(ctx: AppContext, args: argparse.Namespace) -> int:
         print(f"Services: {prefix} services {target.canonical}")
         if args.command_name == "full":
             print(f"Web results: {prefix} web {target.canonical}")
-    if args.command_name == "full":
-        print("note: assessment and reporting stages are added in Milestones 7-8.")
+    if args.command_name == "full" and report.status != "INTERRUPTED":
+        from aiszx.assessment.engine import Assessor
+        from aiszx.cli.commands.assess_cmd import print_report
+
+        print("\n=== Assessment ===")
+        print_report(Assessor(ctx).run(eng.slug, target.canonical), target.canonical, prefix)
+        print("note: reporting arrives in Milestone 8.")
     return code
 
 

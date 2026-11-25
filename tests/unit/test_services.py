@@ -187,7 +187,7 @@ def test_cli_observations(cli, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("aiszx.orchestrator.orchestrator.inventory_tool_resolver", lambda app: resolver)
     assert cli("init") == 0 and cli("scope", "add", "10.129.0.0/16") == 0 and cli("target", "add", TARGET) == 0
     assert cli("observations", TARGET) == 0
-    assert "No enumeration results" in capsys.readouterr().out
+    assert "none recorded yet" in capsys.readouterr().out
     assert cli("run", TARGET, "-m", "recon.tcp_ports", "-m", "recon.service_id") == 0
     assert cli("enumerate", TARGET, "-m", "smb", "-m", "rservices") == 0
     capsys.readouterr()

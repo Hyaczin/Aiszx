@@ -79,7 +79,9 @@ def cmd_enumerate(ctx: AppContext, args: argparse.Namespace) -> int:
                         run_params={"vhosts": vhost_list(args.vhost)})
     code = _finish(report, ctx, args)
     prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
-    print(f"Web results: {prefix} web {target.canonical}")
+    if any(pu.module.meta.id.startswith("http.") and report.states.get(pu.key) == "COMPLETED" for pu in report.units):
+        print(f"Web results: {prefix} web {target.canonical}")
+    print(f"Observations: {prefix} observations {target.canonical}   |   findings: {prefix} assess {target.canonical}")
     return code
 
 
@@ -156,39 +158,23 @@ def register_observations(sub: argparse._SubParsersAction, common: argparse.Argu
 
 
 def cmd_observations(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aiszx.assessment.knowledge import gather
+
     eng = ctx.engagements().get(engagement_slug(ctx, args))
     target = ctx.targets().get(eng, args.target)
-    store = ExecutionStore(ctx.db)
-    if args.run_id:
-        ex = store.find_run(target.id, args.run_id)
-        if ex is None:
-            raise NotFoundError(f"run {args.run_id} not found for {target.canonical}")
-    else:
-        ex = ctx.db.query_one(
-            "SELECT e.* FROM executions e WHERE e.target_id = ? AND EXISTS (SELECT 1 FROM module_executions u"
-            " JOIN modules m ON m.id = u.module_id WHERE u.execution_id = e.id AND m.stage = 'enumeration'"
-            " AND u.state = 'COMPLETED') ORDER BY e.started_at DESC, e.run_id DESC LIMIT 1", (target.id,))
-        if ex is None:
-            print(f"No enumeration results for {target.canonical} yet. Run `enumerate {target.canonical}` first.")
-            return 0
-    run_dir = ctx.config.data_dir / ex["workspace_path"]
-    rows = []
-    for u in store.units(ex["id"]):
-        if u["state"] != "COMPLETED" or not u["output_dir"]:
-            continue
-        try:
-            data = json.loads((run_dir / u["output_dir"] / "parsed" / "result.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        for o in data.get("observations", []):
-            rows.append({"module": u["module_id"], "unit": u["unit_key"], **o})
+    if args.run_id and ExecutionStore(ctx.db).find_run(target.id, args.run_id) is None:
+        raise NotFoundError(f"run {args.run_id} not found for {target.canonical}")
+    k = gather(ctx.db, ctx.config.data_dir, target.id, target.canonical, run_id=args.run_id)
+    rows = [{"module": o.module, "unit": o.unit, "key": o.key, "value": o.value, "url": o.url, "run_id": o.run_id}
+            for o in k.observations]
     if args.json:
-        emit_json({"run_id": ex["run_id"], "observations": rows})
+        emit_json({"runs": k.runs_used, "observations": rows})
         return 0
-    print(f"Observations for {target.canonical} (run {ex['run_id']}); unverified, assessed in Milestone 7")
+    scope = f"run {args.run_id}" if args.run_id else f"latest result of each module across runs {', '.join(k.runs_used) or '-'}"
+    print(f"Observations for {target.canonical} ({scope}); unverified until `assess`")
     if not rows:
-        print("  none recorded")
+        print("  none recorded yet: run `enumerate` first")
         return 0
-    print(table([(r["module"], r["key"], _clip(json.dumps(r["value"]), 70), r.get("url", ""))
-                 for r in rows], ("MODULE", "OBSERVATION", "VALUE", "WHERE")))
+    print(table([(r["module"], r["key"], _clip(json.dumps(r["value"]), 64), r.get("url") or "", r["run_id"])
+                 for r in rows], ("MODULE", "OBSERVATION", "VALUE", "WHERE", "RUN")))
     return 0

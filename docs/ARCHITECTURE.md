@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 6 implemented. Implementation notes are in §13 to §16.
+**Status:** Approved 2026-11-25. Milestones 1 to 7 implemented. Implementation notes are in §13 to §17.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -1014,3 +1014,16 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **`ModuleMeta.after`** is an ordering-only dependency. The module runs after those modules, if present, and sees their results, but is never skipped because they failed. `dns.dig` uses it to query the AD domain that LDAP or SMB found in the same run. `depends_on` still blocks on failure, e.g. `ldap.anonymous` on `ldap.rootdse`.
 - **Re-classification at planning time.** Services loaded for planning are re-classified with the current `service_map.yaml`, so new categories (for example `rservices`) reach existing scan results without re-scanning.
 - **`observations TARGET`** aggregates the observations from the latest run that has completed enumeration units. They remain in `parsed/result.json` until Milestone 7 stores them in a table.
+
+---
+
+## 17. Milestone 7 implementation notes
+
+- **Knowledge consolidation.** `aiszx.assessment.knowledge.gather` takes the latest completed result of each (module, unit) across all of a target's runs, plus the latest services, endpoints, resources and technologies. Observations stay in `parsed/result.json`; a separate observations table was not needed, so the extra table proposed in §1.5 D1 was dropped.
+- **Rules** are plain functions registered with `@rule("ID")`. A failing rule is recorded as a limitation and doesn't stop the assessment.
+- **Fingerprint.** SHA-256 over (rule id, target, service key, location, discriminator). The ID is `F-` plus the first 10 hex characters.
+- **Schema.** Migration `0006_findings.sql` adds `findings` (current state per target, with analyst classification and notes) and `assessment_results` (a per-assessment snapshot used by the Milestone 8 comparison).
+  - The spec's per-run findings table is realised as these two tables, so a finding's identity is stable across runs.
+  - Findings are never deleted; findings that are no longer produced get `status = not_reproduced`.
+- **Assessments are runs** (`command = 'assess'`, no units) whose output files are registered as evidence. `resume` ignores them, and `recon --force` checks only look at `recon`/`full` runs.
+- **Exploit-DB.** searchsploit is run locally through the plain process runner (it makes no network or target contact) with product + major.minor terms. Results are always `unverified_hypothesis` with low confidence.

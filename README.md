@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 6 (service enumeration) complete.** Aiszx does reconnaissance with Nmap, then enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and r-services, plus MSSQL, MySQL, RDP, SMTP and VNC through information-only NSE scripts. It never guesses credentials or exploits anything. Everything runs on top of engagements, scope, workspaces, tool management and the orchestrator (checkpoints, retries, crash recovery and resume).
+> **Status: Milestone 7 (assessment) complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), and turns what it observed into **findings**. Each finding has a severity, a confidence, a classification, evidence references and a prioritised list of manual next steps. Findings keep stable IDs across assessments.
 
 ---
 
@@ -306,6 +306,38 @@ Modules are planned from the services that recon identified. A module without a 
 
 `observations TARGET` lists everything recorded, for example null sessions, signing not required, readable shares, allowed zone transfers, anonymous LDAP read, world-mountable NFS exports, weak SSH algorithms and anonymous FTP. These are unverified observations; the assessment stage (Milestone 7) turns them into findings with severity and confidence. Module options are documented in [config/modules.yaml](config/modules.yaml).
 
+### Assessment and findings
+
+```bash
+python3 pentest.py -e lab assess 10.10.10.5                        # observations → findings
+python3 pentest.py -e lab findings list 10.10.10.5                 # open findings, highest priority first
+python3 pentest.py -e lab findings show F-1a2b3c4d5e               # details, evidence files, next steps
+python3 pentest.py -e lab findings mark F-1a2b3c4d5e --as false_positive --note "lab default config"
+python3 pentest.py -e lab full 10.10.10.5                          # recon + enumeration + assessment
+```
+
+`assess` reads the **latest result of every module across all runs** of the target (`observations TARGET` shows the same consolidated view), applies the rule library in [aiszx/assessment/rules.py](aiszx/assessment/rules.py) and records the outcome as an assessment run.
+
+| Field | Values |
+|-------|--------|
+| severity | `info` < `low` < `medium` < `high` < `critical`: the impact if the issue is real |
+| confidence | `low` < `medium` < `high`: how strongly the evidence supports it. Higher when two tools agree. |
+| classification | `confirmed_observation` (observed fact), `potential_vulnerability` (known-weak configuration), `unverified_hypothesis` (inferred, e.g. from a version), `requires_manual_validation`, `false_positive` (analyst decision) |
+
+Rules cover:
+- **SMB:** signing not required, SMBv1, null and guest sessions, anonymously readable shares, user enumeration.
+- **DNS:** zone transfer, version disclosure.
+- **LDAP:** anonymous read, domain controller.
+- **Other services:** anonymous FTP, world-mountable NFS, readable SNMP, weak SSH algorithms, exposed r-services, reachable databases.
+- **Web:** session cookies without HttpOnly, security headers, version disclosure, directory listing, login forms, interesting paths, Nikto items, untested virtual hosts, untrusted TLS certificates.
+- **Correlation:** an AD domain together with SMB signing not required.
+
+Offline `searchsploit` matches on product versions become **unverified hypotheses with low confidence**, never claims.
+
+- **An open port alone is never a finding,** and no finding claims access is possible. Next steps describe what a person should validate within the authorised scope.
+- **Stable IDs:** a finding keeps its ID across assessments. One that stops appearing becomes `not_reproduced` and is kept. Analyst decisions (`findings mark`) persist, and false positives drop out of the investigation list.
+- **Output:** each assessment writes `findings/findings.json` and `assessment/investigation.json` into its run directory, registered as evidence.
+
 ### Running modules, history and resume
 
 ```bash
@@ -373,9 +405,10 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
 - `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` are shortcuts over it.
 - `full` runs reconnaissance and then enumeration in one run; assessment and reporting join in Milestones 7 and 8.
-- `services TARGET`, `web TARGET`, `observations TARGET` and `discover CIDR` are additional commands.
+- `services TARGET`, `web TARGET`, `observations TARGET`, `findings …` and `discover CIDR` are additional commands.
+- `full` runs recon, enumeration and assessment in sequence.
 - `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
-- Commands not yet implemented (`assess`, `report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
+- Commands not yet implemented (`report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
 
 ## Development
 
@@ -400,6 +433,7 @@ aiszx/orchestrator/   planner, executor, tool runner + scope guard, state, locks
 aiszx/modules/recon/  nmap modules: host_discovery, tcp_ports, service_id, udp
 aiszx/modules/http/   web modules: probe, whatweb, screenshots, content_discovery, nikto
 aiszx/modules/{smb,dns,ssh,ftp,ldap,nfs,snmp,nse,rservices}/   service enumeration modules
+aiszx/assessment/     knowledge consolidation, rules, Exploit-DB hypotheses, findings engine
 aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
 aiszx/classify/       service → category classification
 aiszx/recon/          nmap command construction, host/port/service store, range discovery
@@ -418,22 +452,20 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | **done** |
 | 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | **done** |
 | 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | **done** |
-| 7 | Assessment: findings, correlation, confidence, investigation paths | next |
-| 8 | Reporting and history: Markdown/HTML/JSON, run comparison | |
+| 7 | Assessment: findings, correlation, confidence, investigation paths | **done** |
+| 8 | Reporting and history: Markdown/HTML/JSON, run comparison | next |
 | 9 | Hardening and deployment | |
 
 ## Upgrading an existing installation
 
 After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 6)
+## Current limitations (Milestone 7)
 
-- **No authenticated enumeration.** Every module uses no credentials, or the standard anonymous, null or guest check. Supplying credentials for authenticated enumeration is not supported yet.
-- **SNMP** needs community strings you were given. Guessing them is out of scope by design.
-- **Kerberos, WinRM and RPC** have no dedicated module. RPC and SMB details come from enum4linux-ng; MSSQL, MySQL, RDP, SMTP and VNC metadata comes from information-only NSE scripts.
-- **r-services** are documented, not tested; verifying trust relationships requires login attempts.
-- Observations are unverified; findings, severity and confidence come in Milestone 7.
+- **The rules are a curated starting set,** not exhaustive. Add your own with `@rule("ID")` in `aiszx/assessment/rules.py`.
+- **Severity** is the rule's default for the finding type; it doesn't model business context. Adjust with analyst notes and classifications.
+- **Version-based hypotheses** come from Exploit-DB title matches and are often noisy (distribution backports). Skip them with `--no-exploitdb`.
+- **Reports** (Markdown, HTML and JSON) and run-to-run comparison arrive in Milestone 8.
+- **No authenticated enumeration.** SNMP needs community strings you configure.
 - **Screenshots** need EyeWitness's headless browser to work; `--vhost` names can't be screenshotted.
-- **Content discovery** is bounded by its wordlist and time limit.
-- **UDP** scans only the profile's top-N ports.
 - POSIX permission checks are skipped when running on Windows (development only).

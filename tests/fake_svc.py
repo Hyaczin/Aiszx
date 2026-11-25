@@ -5,6 +5,7 @@ for NetExec). FAKE_SVC_LOG: append one JSON line [tool, args] per call.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,15 +61,19 @@ corp.local.		3600	IN	SOA	dc01.corp.local. hostmaster.corp.local. 1 900 600 86400
 def main() -> int:
     tool, args = sys.argv[1], sys.argv[2:]
     fakelog.write("FAKE_SVC_LOG", [tool, args])
+    signed = bool(os.environ.get("FAKE_SVC_SIGNING"))  # simulate a later scan where signing is enforced
     if tool == "netexec":
+        banner = NXC_BANNER.replace("signing:False", "signing:True") if signed else NXC_BANNER
         if "-u" not in args:
-            print(NXC_BANNER, end="")
+            print(banner, end="")
         elif args[args.index("-u") + 1] == "":
-            print(NXC_NULL, end="")
+            print(NXC_NULL.replace(NXC_BANNER, banner), end="")
         else:
-            print(NXC_GUEST, end="")
+            print(NXC_GUEST.replace(NXC_BANNER, banner), end="")
     elif tool == "enum4linux-ng":
-        Path(args[args.index("-oJ") + 1] + ".json").write_text(json.dumps(E4L))
+        data = json.loads(json.dumps(E4L))
+        data["smb_dialects"]["SMB signing required"] = signed
+        Path(args[args.index("-oJ") + 1] + ".json").write_text(json.dumps(data))
         print("ENUM4LINUX - next generation")
     elif tool == "smbclient":
         print("Disk|Public|Public files\nIPC|IPC$|Remote IPC")
