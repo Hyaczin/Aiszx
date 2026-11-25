@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 4 implemented. Implementation notes are in §13 (M3) and §14 (M4).
+**Status:** Approved 2026-11-25. Milestones 1 to 5 implemented. Implementation notes are in §13 (M3), §14 (M4) and §15 (M5).
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -989,3 +989,15 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
   - The scope guard now validates CIDR targets address by address (up to /16), together with `Command.exclude`, which holds the scope exclusions passed to nmap.
   - Hosts are registered as targets only on request.
 - **Web probe deferral.** The spec's "Stage 5: web service identification" (titles, headers, TLS) moves to Milestone 5 with the HTTP modules. Milestone 4 identifies and classifies web services through Nmap.
+
+---
+
+## 15. Milestone 5 implementation notes
+
+- **Endpoints.** An endpoint is an (`http`/`https` service × host name) pair. Host names are the pinned address, the target's hostname for a hostname target, `--vhost` names (stored as run parameters in the run snapshot so `resume` reuses them) and `options.vhosts`. WinRM is excluded through `skip_categories`.
+- **Virtual-host scope.** Connections always go to the pinned in-scope address. `--vhost` names are pinned to that address in the scope guard, so they are evaluated against scope as names served by an in-scope IP. Nothing edits `/etc/hosts`.
+- **No in-process networking.** `http.probe` uses curl and `openssl s_client` through the tool runner rather than Python's `http.client`, so every request passes the scope guard and leaves raw evidence.
+- **Schema.** Migration `0005_web.sql` adds `web_endpoints`, `web_resources` and `technologies`. Like the recon tables, rows belong to the unit that produced them.
+- **Tool working directory.** Tools now run with their working directory set to the attempt's `raw/` folder, so files they drop there (feroxbuster state, geckodriver logs, EyeWitness output) stay with the evidence. Image files are registered as `screenshot` evidence.
+- **Folder layout.** Enumeration output goes to `enumeration/<category>/<module name>/<unit>/`, without repeating the family prefix.
+- **Observations** from the probe and Nikto stay in `parsed/result.json` until the assessment engine (Milestone 7) consumes them.

@@ -19,3 +19,22 @@ modules:
     options:
       count: 2
       wait_seconds: 2
+
+  # --- HTTP (Milestone 5) -------------------------------------------------------
+  # Common to the http.* modules:
+  #   vhosts:          extra virtual hosts to present (also `enumerate --vhost NAME`)
+  #   skip_categories: service categories never treated as websites (default: [winrm])
+  #
+  # http.probe:             user_agent, timeout (s), paths (default [/robots.txt, /sitemap.xml])
+  # http.whatweb:           aggression (1 = stealthy, 3 = aggressive), user_agent
+  # http.screenshots:       timeout (s), threads
+  # http.content_discovery: wordlists (first existing is used), threads, depth, extensions,
+  #                         time_limit (feroxbuster syntax, e.g. 10m), tool (auto|feroxbuster|gobuster)
+  # http.nikto:             max_time (e.g. 15m), tuning (Nikto -Tuning letters)
+  #
+  # Example:
+  #   http.content_discovery:
+  #     options:
+  #       wordlists: [/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt]
+  #       extensions: [php, txt]
+  #       time_limit: 20m

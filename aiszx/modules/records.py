@@ -74,3 +74,51 @@ class ServiceRecord:
             method=row["detection_method"], categories=json.loads(row["categories_json"] or "[]"),
             category_confidence=row["category_confidence"], scripts=json.loads(row["scripts_json"] or "{}"),
         )
+
+
+@dataclass
+class WebEndpointRecord:
+    url: str
+    scheme: str
+    host: str                         # Host header (IP or virtual host)
+    port: int
+    address: str                      # IP connected to
+    service_key: str | None = None
+    status: int | None = None
+    title: str | None = None
+    server: str | None = None
+    location: str | None = None
+    content_type: str | None = None
+    content_length: int | None = None
+    headers: dict[str, Any] = field(default_factory=dict)
+    tls: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class WebResourceRecord:
+    endpoint_url: str
+    url: str
+    path: str
+    status: int | None
+    length: int | None = None
+    redirect: str | None = None
+    source: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TechnologyRecord:
+    endpoint_url: str
+    name: str
+    version: str | None = None
+    detail: str | None = None
+    source: str = ""
+    confidence: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 4 (Nmap reconnaissance) complete.** On top of engagements, scope, workspaces, tool management and the orchestrator (checkpoints, retries, crash recovery and resume), Aiszx now runs Nmap reconnaissance: host discovery, all-port TCP, service and version identification, UDP, and range discovery. It stores and classifies every discovered port and service. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
+> **Status: Milestone 5 (HTTP) complete.** On top of engagements, scope, workspaces, tool management, the orchestrator (checkpoints, retries, crash recovery and resume) and Nmap reconnaissance, Aiszx now enumerates every web service it finds. That covers status, titles and headers, cookies, robots.txt and sitemap.xml, TLS details, WhatWeb technologies, EyeWitness screenshots, content discovery and Nikto. Virtual hosts are supported without editing `/etc/hosts`. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
 
 ---
 
@@ -251,6 +251,34 @@ Uncertain (UDP open|filtered: no reply, could be open or filtered): 161/udp
 - Live hosts are only listed. `--register` asks before adding each one as a target, and nothing else is scanned.
 - `discover --list` shows previous discovery runs.
 
+### Web enumeration
+
+```bash
+python3 pentest.py -e htb-box-reset enumerate 10.129.73.247                    # all enumeration modules
+python3 pentest.py -e htb-box-reset enumerate 10.129.73.247 -m http.probe -m http.whatweb
+python3 pentest.py -e htb-box-reset enumerate 10.129.73.247 --vhost box.htb    # also present a virtual host
+python3 pentest.py -e htb-box-reset web 10.129.73.247                          # results
+python3 pentest.py -e htb-box-reset full 10.129.73.247 --vhost box.htb         # recon + enumeration in one run
+```
+
+`enumerate` plans from the services found by the latest `recon`. `full` plans from the services found earlier in the same run. Every web service (category `http`/`https`, excluding WinRM) becomes an endpoint for each host name: the IP, the target's hostname if it was registered by name, and each `--vhost`.
+
+| Module | Safety | What it does |
+|--------|--------|--------------|
+| `http.probe` | active_safe | Uses curl to collect the status, title, server and headers, Set-Cookie flags, redirects, robots.txt and sitemap.xml entries. Adds `openssl s_client` TLS details plus the certificate SANs from nmap's `ssl-cert` script. |
+| `http.whatweb` | active_safe | Technology fingerprinting; the aggression level is an option. |
+| `http.screenshots` | active_safe | EyeWitness screenshots, using only the URLs of identified web services, plus a report. |
+| `http.content_discovery` | active_noisy | feroxbuster, or gobuster if that's what is installed. Bounded by wordlist, time limit, threads and recursion depth. |
+| `http.nikto` | active_noisy | Nikto checks. Its items are unverified indicators. |
+
+`conservative` skips the noisy modules; `standard` and `comprehensive` run them.
+
+**Virtual hosts.** Aiszx always connects to the target's pinned in-scope IP. A virtual host name is only sent as the `Host` header and TLS server name (`curl --resolve`, `-H Host:`, `nikto -vhost`), so `/etc/hosts` is never edited. Host names that appear in redirects or certificate SANs are listed as **hints**; they are not tested until you pass them with `--vhost`. EyeWitness can't set a `Host` header, so screenshots cover the IP and a hostname target, and `--vhost` names are skipped (recorded as a limitation).
+
+The probe also records **observations** for the assessment stage (Milestone 7): missing security headers, cookies without HttpOnly, Secure or SameSite, server version disclosure, X-Powered-By, login forms, directory listings, redirects and host name hints. `web TARGET` shows endpoints, technologies, discovered paths, observations, hints and where the EyeWitness report is.
+
+Module options (wordlists, time limits, threads, extensions, aggression) are documented in [config/modules.yaml](config/modules.yaml). Override them in `~/.config/aiszx/modules.yaml` or per engagement in `overrides.yaml`.
+
 ### Running modules, history and resume
 
 ```bash
@@ -316,11 +344,11 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - Runtime data lives in `~/.local/share/aiszx`, not inside the repository.
 - The tool registry is `config/tools.yaml` (overridable like every other config file), with code in `aiszx/tools/`.
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
-- `run TARGET -m MODULE` is the generic way to run modules. `recon` and `full` are shortcuts over it; `enumerate` follows in Milestone 5.
-- `full` currently runs reconnaissance only and grows with each milestone.
-- `services TARGET` and `discover CIDR` are additional commands.
+- `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` are shortcuts over it.
+- `full` runs reconnaissance and then enumeration in one run; assessment and reporting join in Milestones 7 and 8.
+- `services TARGET`, `web TARGET` and `discover CIDR` are additional commands.
 - `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
-- Commands not yet implemented (`enumerate`, `assess`, `report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
+- Commands not yet implemented (`assess`, `report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
 
 ## Development
 
@@ -343,6 +371,7 @@ aiszx/tools/          tool registry, inventory/probes, health checks, capabiliti
 aiszx/modules/        module interface (base.py), discovery (registry.py), built-in modules (core/)
 aiszx/orchestrator/   planner, executor, tool runner + scope guard, state, locks, recovery/resume, settings
 aiszx/modules/recon/  nmap modules: host_discovery, tcp_ports, service_id, udp
+aiszx/modules/http/   web modules: probe, whatweb, screenshots, content_discovery, nikto
 aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
 aiszx/classify/       service → category classification
 aiszx/recon/          nmap command construction, host/port/service store, range discovery
@@ -359,8 +388,8 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 2 | Tool management: Parrot tool inventory (APT/dpkg/PATH/pipx/pyenv/go/git), versions, health checks, install plans, nmap `setcap` step | **done** |
 | 3 | Orchestrator: module interface, execution states, checkpoints, retries, resume, locks | **done** |
 | 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | **done** |
-| 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | next |
-| 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | |
+| 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | **done** |
+| 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | next |
 | 7 | Assessment: findings, correlation, confidence, investigation paths | |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | |
 | 9 | Hardening and deployment | |
@@ -369,12 +398,12 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 
 After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 4)
+## Current limitations (Milestone 5)
 
-- **Web service identification** (titles, headers, TLS details, technologies) arrives with the HTTP modules in Milestone 5. For now, web services are identified and classified by Nmap only.
-- **UDP** scans only the profile's top-N ports and needs raw sockets. `open|filtered` results stay uncertain by design.
-- **Resumed TCP scans:** after `nmap --resume`, ports missing from the XML are read from the grepable output. That fallback is recorded as a limitation of the unit.
-- **Range discovery** is a single `nmap -sn` per range, up to a /16 per run. Discovered hosts are not scanned until you register them.
-- Module observations are stored in each unit's `parsed/result.json`; a database table follows in Milestone 7.
-- Resource usage is recorded as duration per command.
+- **Screenshots** need EyeWitness's headless browser to work on your system. Failures are recorded and the run continues. `--vhost` names can't be screenshotted.
+- **Content discovery** is only as good as its wordlist, and is bounded by the time limit (default 10 minutes per endpoint). gobuster doesn't recurse.
+- **Nikto** items and the probe's observations are unverified indicators. Findings, with confidence and severity, come in Milestone 7.
+- **Host name hints** from redirects and certificates are not tested automatically; add them to scope and use `--vhost`.
+- Other services (SMB, DNS, LDAP, SSH, FTP, databases and so on) are enumerated from Milestone 6.
+- **UDP** scans only the profile's top-N ports and needs raw sockets; `open|filtered` stays uncertain.
 - POSIX permission checks are skipped when running on Windows (development only).

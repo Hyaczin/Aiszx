@@ -84,7 +84,8 @@ class Planner:
 
     def plan(self, modules: list[Module], *, engagement, target, address: str, profile: Profile,
              roe_max: Safety | None, upstream: dict[str, list[dict[str, Any]]] | None = None,
-             services: list | None = None, blocked: dict[str, str] | None = None) -> list[PlannedUnit]:
+             services: list | None = None, blocked: dict[str, str] | None = None,
+             run_params: dict[str, Any] | None = None) -> list[PlannedUnit]:
         ceiling = effective_ceiling(profile, roe_max)
         names = sorted({t.name for m in modules for t in m.meta.tools})
         tools = self.resolve_tools(names) if names else {}
@@ -124,7 +125,8 @@ class Planner:
                 reason = f"required tool unavailable: {', '.join(missing)}; see `tools missing`"
 
             pctx = PlanContext(engagement, target, address, cfg.options, profile_params=profile.params,
-                               tool_details=details, upstream=upstream or {}, services=list(services or []))
+                               tool_details=details, upstream=upstream or {}, services=list(services or []),
+                               run_params=run_params or {})
             if reason is None:
                 reason = module.unavailable_reason(pctx)
             units = module.plan(pctx)

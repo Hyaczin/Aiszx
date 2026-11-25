@@ -93,6 +93,7 @@ class _Run:
     profile: Profile
     settings: ModuleSettings
     rows: dict[tuple[str, str], Any] | None      # previous unit rows when resuming
+    run_params: dict[str, Any] = field(default_factory=dict)
     previous_status: str | None = None
     confirmed: bool = False
     declined: bool = False
@@ -168,7 +169,7 @@ class Orchestrator:
         return reconcile(self.db, self.owner, self.cfg.stale_after_seconds)
 
     def start(self, engagement_slug: str, target_raw: str, tokens: list[str], *, profile: str | None = None,
-              command: str = "run") -> RunReport:
+              command: str = "run", run_params: dict[str, Any] | None = None) -> RunReport:
         if not tokens:
             raise ValidationError("select at least one module (-m MODULE); see `modules list`")
         messages = self.reconcile()
@@ -183,6 +184,7 @@ class Orchestrator:
         snapshot = {
             "command": command, "modules": list(tokens), "profile": prof.name, "address": address,
             "ceiling": _ceiling_text(prof, eng), "profile_params": dict(prof.params),
+            "run_params": dict(run_params or {}),
             "effective": {m.meta.id: _effective_dict(settings, m) for m in modules},
             "settings_sources": [str(s) for s in settings.sources],
         }
@@ -195,7 +197,8 @@ class Orchestrator:
             workspace_path=run.path.relative_to(self.app.config.data_dir).as_posix(),
         )
         self._write_scope_record(run.path, eng, target, address, decision)
-        state = _Run(eid, run.run_id, run.path, eng, target, address, prof, settings, rows=None)
+        state = _Run(eid, run.run_id, run.path, eng, target, address, prof, settings, rows=None,
+                     run_params=dict(run_params or {}))
         report = self._run(state, modules)
         report.messages = messages + report.messages
         return report
@@ -218,7 +221,7 @@ class Orchestrator:
         rows = {(r["module_id"], r["unit_key"]): r for r in self.store.units(ex["id"])}
         self.store.sync_modules(self.registry)
         state = _Run(ex["id"], ex["run_id"], run_dir, eng, target, address, prof, settings, rows=rows,
-                     previous_status=ex["status"])
+                     previous_status=ex["status"], run_params=dict(snapshot.get("run_params", {})))
         self._write_scope_record(run_dir, eng, target, address, decision)
         report = self._run(state, modules)
         if state.declined:
@@ -251,7 +254,8 @@ class Orchestrator:
                 services = self.recon.latest_services(run.target.id, prefer_execution=run.eid).services
                 planned = planner.plan(layer, engagement=run.eng, target=run.target, address=run.address,
                                        profile=run.profile, roe_max=_roe(run.eng), upstream=upstream,
-                                       services=services, blocked=self._blocked(layer, all_planned, states))
+                                       services=services, blocked=self._blocked(layer, all_planned, states),
+                                       run_params=run.run_params)
                 for pu in planned:
                     pu.unit_dir = self._unit_dir(run.run_dir, pu)
                 if new_run:
@@ -349,7 +353,11 @@ class Orchestrator:
     def _execute_layer(self, run: _Run, planned: list[PlannedUnit], upstream: dict, services: list,
                        runlog: RunLog) -> dict[tuple[str, str], str]:
         eid, target, run_dir = run.eid, run.target, run.run_dir
+        # Connections always go to the pinned address; host names (target hostname, --vhost names) are only
+        # sent as Host header/SNI, so they are evaluated against scope with that address.
         pinned = {} if target.identity.is_ip else {target.canonical: [run.address]}
+        for vhost in run.run_params.get("vhosts", []):
+            pinned.setdefault(vhost, [run.address])
         guard = ScopeGuard(self.app.scope().policy(run.eng), run.eng, self._resolver(), pinned)
         launch_all: dict[str, list[str]] = {}
         for pu in planned:
@@ -433,7 +441,7 @@ class Orchestrator:
             address=run.address, profile=run.profile.name, options=dict(pu.config.options),
             tool_launch=pu.tool_launch, tool_versions=pu.tool_versions, upstream=upstream, cancel_event=self.cancel,
             previous_attempt_dir=pu.previous_attempt_dir, profile_params=run.profile.params,
-            tool_details=pu.tool_details, services=list(services),
+            tool_details=pu.tool_details, services=list(services), run_params=run.run_params,
         ) for pu in planned}
 
         executor = Executor(
@@ -478,7 +486,9 @@ class Orchestrator:
         elif meta.stage is Stage.ENUMERATION:
             cats = self.app.config.workspace.enumeration_categories
             cat = meta.categories[0] if meta.categories and meta.categories[0] in cats else "other"
-            base = run_dir / "enumeration" / cat
+            # enumeration/<category>/<module name without family>: e.g. enumeration/http/content_discovery
+            return (run_dir / "enumeration" / cat / meta.id.split(".", 1)[1]
+                    / re.sub(r"[^A-Za-z0-9._-]", "_", pu.unit.key))
         else:
             base = run_dir / "assessment"
         return base / meta.id / re.sub(r"[^A-Za-z0-9._-]", "_", pu.unit.key)
@@ -550,7 +560,14 @@ def register_evidence(store: ExecutionStore, *, eid: str, target_id: str | None,
     sensitive = set(result.sensitive_files) if result else set()
     for path in sorted(p for p in adir.rglob("*") if p.is_file()):
         rel = path.relative_to(run_dir).as_posix()
-        kind = "parsed" if "/parsed/" in f"/{rel}" else ("log" if path.name.endswith(".cmd.txt") else "raw")
+        if "/parsed/" in f"/{rel}":
+            kind = "parsed"
+        elif path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+            kind = "screenshot"
+        elif path.name.endswith(".cmd.txt"):
+            kind = "log"
+        else:
+            kind = "raw"
         store.add_evidence(
             execution_id=eid, target_id=target_id, module_execution_id=unit_id, attempt=attempt, tool=tools,
             kind=kind, rel_path=rel, sha256=file_sha256(path), size_bytes=path.stat().st_size,

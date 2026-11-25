@@ -24,7 +24,14 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence
 
-from aiszx.modules.records import HostRecord, PortRecord, ServiceRecord
+from aiszx.modules.records import (
+    HostRecord,
+    PortRecord,
+    ServiceRecord,
+    TechnologyRecord,
+    WebEndpointRecord,
+    WebResourceRecord,
+)
 
 if TYPE_CHECKING:
     from aiszx.targets.engagements import Engagement
@@ -166,6 +173,9 @@ class ModuleResult:
     hosts: list[HostRecord] = field(default_factory=list)                # persisted to discovered_hosts
     ports: list[PortRecord] = field(default_factory=list)                # persisted to discovered_ports
     services: list[ServiceRecord] = field(default_factory=list)          # persisted to services
+    endpoints: list[WebEndpointRecord] = field(default_factory=list)     # persisted to web_endpoints
+    resources: list[WebResourceRecord] = field(default_factory=list)     # persisted to web_resources
+    technologies: list[TechnologyRecord] = field(default_factory=list)   # persisted to technologies
 
     def to_json(self, module_id: str, unit_key: str) -> str:
         return json.dumps({
@@ -173,6 +183,8 @@ class ModuleResult:
             "observations": self.observations, "limitations": self.limitations,
             "hosts": [h.to_dict() for h in self.hosts], "ports": [p.to_dict() for p in self.ports],
             "services": [s.to_dict() for s in self.services],
+            "endpoints": [e.to_dict() for e in self.endpoints], "resources": [r.to_dict() for r in self.resources],
+            "technologies": [t.to_dict() for t in self.technologies],
         }, indent=2, sort_keys=True, default=str)
 
 
@@ -186,6 +198,7 @@ class PlanContext:
     tool_details: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     upstream: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)  # completed results in this run
     services: list[ServiceRecord] = field(default_factory=list)                 # known services of the target
+    run_params: Mapping[str, Any] = field(default_factory=dict)                 # per-run CLI inputs (e.g. vhosts)
 
 
 @dataclass
@@ -207,6 +220,7 @@ class RunContext:
     profile_params: Mapping[str, Any] = field(default_factory=dict)
     tool_details: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     services: list[ServiceRecord] = field(default_factory=list)
+    run_params: Mapping[str, Any] = field(default_factory=dict)
 
 
 class Module(abc.ABC):

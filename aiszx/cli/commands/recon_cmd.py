@@ -27,11 +27,12 @@ def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -
     r.set_defaults(handler=cmd_recon, command_name="recon")
 
     f = sub.add_parser(
-        "full", parents=[common], help="full workflow (currently reconnaissance; later milestones add more stages)",
-        description="Runs every available stage in one run. Today: reconnaissance. Enumeration, assessment and "
-                    "reporting stages are added as their milestones land (5-8).",
+        "full", parents=[common], help="full workflow: reconnaissance, then enumeration of what it finds",
+        description="Runs reconnaissance and enumeration in one run: enumeration modules are planned from the "
+                    "services identified moments earlier. Assessment and reporting stages arrive in Milestones 7-8.",
     )
     _target_args(f)
+    f.add_argument("--vhost", action="append", default=[], metavar="NAME", help="virtual host to test; repeatable")
     f.set_defaults(handler=cmd_recon, command_name="full")
 
     s = sub.add_parser("services", parents=[common], help="show discovered ports and services of a target")
@@ -62,21 +63,27 @@ def _target_args(p: argparse.ArgumentParser) -> None:
 def cmd_recon(ctx: AppContext, args: argparse.Namespace) -> int:
     eng = ctx.engagements().get(engagement_slug(ctx, args))
     target = ctx.targets().get(eng, args.target)
+    prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
     last = ExecutionStore(ctx.db).find_run(target.id, None)
     if (last is not None and not args.force and last["command"] in ("recon", "full")
             and last["status"] in (EXEC_INTERRUPTED, EXEC_PARTIAL, EXEC_FAILED)):
-        prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
         raise AiszxError(f"the last {last['command']} run {last['run_id']} is {last['status']}; continue it with "
                          f"`{prefix} resume {target.canonical}` or start a new run with --force")
     orch = ctx.orchestrator(approve=_approver(args), progress=print, announce=_announce)
-    report = orch.start(eng.slug, args.target, RECON_MODULES, profile=args.profile, command=args.command_name)
+    tokens, run_params = list(RECON_MODULES), {}
+    if args.command_name == "full":
+        from aiszx.cli.commands.enum_cmd import enumeration_modules, vhost_list
+        tokens += enumeration_modules(ctx)
+        run_params = {"vhosts": vhost_list(args.vhost)}
+    report = orch.start(eng.slug, args.target, tokens, profile=args.profile, command=args.command_name,
+                        run_params=run_params)
     code = _finish(report, ctx, args)
     if report.counts.get("COMPLETED"):
-        prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
         print(f"Services: {prefix} services {target.canonical}")
+        if args.command_name == "full":
+            print(f"Web results: {prefix} web {target.canonical}")
     if args.command_name == "full":
-        print("note: `full` currently covers reconnaissance; enumeration, assessment and reporting are added in "
-              "Milestones 5-8.")
+        print("note: assessment and reporting stages are added in Milestones 7-8.")
     return code
 
 

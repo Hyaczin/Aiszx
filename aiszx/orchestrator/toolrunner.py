@@ -142,8 +142,10 @@ class ToolRunner:
         start = time.monotonic()
         with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
             try:
+                # cwd = the attempt's raw directory: tools that drop files in their working directory
+                # (state files, logs, geckodriver.log, ...) keep them with the evidence.
                 proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env,
-                                        start_new_session=os.name == "posix")
+                                        cwd=str(out_dir), start_new_session=os.name == "posix")
             except OSError as exc:
                 return CommandResult(cmd.label, shown, None, time.monotonic() - start, stdout_path, stderr_path,
                                      error=f"{type(exc).__name__}: {exc.strerror or exc}")

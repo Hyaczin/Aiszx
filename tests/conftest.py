@@ -17,6 +17,16 @@ from aiszx.targets.scope_store import ScopeStore
 from aiszx.targets.workspace import WorkspaceLayout
 
 
+def pytest_configure(config):
+    """Windows only (development): pytest's default temp paths plus deep run directories can exceed
+    MAX_PATH (260). Use a short base directory unless one was given. Linux is unaffected."""
+    import os
+    import tempfile
+
+    if os.name == "nt" and not config.option.basetemp:
+        config.option.basetemp = str(Path(tempfile.gettempdir()) / "aiszx-pt")
+
+
 class FakeRunner:
     """Mock for ProcessRunner: responses keyed by program basename + leading arguments.
 

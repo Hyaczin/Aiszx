@@ -267,4 +267,5 @@ def test_cli_discover_and_full(recon_cli, capsys):
     assert recon_cli("discover", "--list") == 0
     assert "10.10.10.0/24" in capsys.readouterr().out
     assert recon_cli("full", TARGET) == 0
-    assert "`full` currently covers reconnaissance" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "stage enumeration:" in out and "http.probe" in out and "assessment and reporting stages" in out

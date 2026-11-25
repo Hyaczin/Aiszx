@@ -24,7 +24,8 @@ class ReconStore:
         self.db = db
 
     def delete_for_unit(self, unit_id: str) -> None:
-        for table in ("services", "discovered_ports", "discovered_hosts"):
+        for table in ("services", "discovered_ports", "discovered_hosts", "web_endpoints", "web_resources",
+                      "technologies"):
             self.db.execute(f"DELETE FROM {table} WHERE module_execution_id = ?", (unit_id,))
 
     def replace_for_unit(self, *, unit_id: str, execution_id: str, engagement_id: str, target_id: str | None,
@@ -50,6 +51,28 @@ class ReconStore:
                 (new_id(), execution_id, target_id, unit_id, s.address, s.protocol, s.port, s.key, s.state, s.name,
                  s.product, s.version, s.extrainfo, s.tunnel, json.dumps(s.cpes), s.confidence, s.method,
                  json.dumps(s.categories), s.category_confidence, json.dumps(s.scripts, sort_keys=True), now))
+        for e in result.endpoints:
+            self.db.execute(
+                "INSERT INTO web_endpoints (id, execution_id, target_id, module_execution_id, service_key, url, scheme,"
+                " host, port, address, status_code, title, server, location, content_type, content_length,"
+                " headers_json, tls_json, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (module_execution_id, url) DO NOTHING",
+                (new_id(), execution_id, target_id, unit_id, e.service_key, e.url, e.scheme, e.host, e.port, e.address,
+                 e.status, e.title, e.server, e.location, e.content_type, e.content_length,
+                 json.dumps(e.headers, sort_keys=True), json.dumps(e.tls, sort_keys=True), now))
+        for r in result.resources:
+            self.db.execute(
+                "INSERT INTO web_resources (id, execution_id, target_id, module_execution_id, endpoint_url, url, path,"
+                " status_code, content_length, redirect, source_tool, discovered_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (module_execution_id, url) DO NOTHING",
+                (new_id(), execution_id, target_id, unit_id, r.endpoint_url, r.url, r.path, r.status, r.length,
+                 r.redirect, r.source, now))
+        for t in result.technologies:
+            self.db.execute(
+                "INSERT INTO technologies (id, execution_id, target_id, module_execution_id, endpoint_url, name, version,"
+                " detail, source_tool, confidence, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id(), execution_id, target_id, unit_id, t.endpoint_url, t.name, t.version, t.detail, t.source,
+                 t.confidence, now))
 
     def insert_host(self, *, execution_id: str, engagement_id: str, target_id: str | None, unit_id: str | None,
                     host: HostRecord, now: str | None = None, in_scope: bool = True) -> str:
@@ -85,6 +108,23 @@ class ReconStore:
     def ports_for_execution(self, execution_id: str) -> list:
         return self.db.query("SELECT * FROM discovered_ports WHERE execution_id = ? ORDER BY protocol, port",
                              (execution_id,))
+
+    def latest_web_execution(self, target_id: str) -> tuple[str, str] | None:
+        row = self.db.query_one(
+            "SELECT e.id, e.run_id FROM executions e WHERE e.target_id = ? AND EXISTS"
+            " (SELECT 1 FROM web_endpoints w WHERE w.execution_id = e.id) ORDER BY e.started_at DESC, e.run_id DESC LIMIT 1",
+            (target_id,))
+        return (row["id"], row["run_id"]) if row else None
+
+    def web_for_execution(self, execution_id: str) -> dict[str, list]:
+        q = self.db.query
+        return {
+            "endpoints": q("SELECT * FROM web_endpoints WHERE execution_id = ? ORDER BY port, host", (execution_id,)),
+            "resources": q("SELECT * FROM web_resources WHERE execution_id = ? ORDER BY endpoint_url, path",
+                           (execution_id,)),
+            "technologies": q("SELECT * FROM technologies WHERE execution_id = ? ORDER BY endpoint_url, name",
+                              (execution_id,)),
+        }
 
     def hosts_for_execution(self, execution_id: str) -> list:
         return self.db.query("SELECT * FROM discovered_hosts WHERE execution_id = ? ORDER BY address", (execution_id,))
