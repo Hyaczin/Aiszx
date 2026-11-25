@@ -1,0 +1,19 @@
+# Example scope file. Import with:
+#   python3 pentest.py -e <engagement> scope import scope.yaml
+# or at creation:
+#   python3 pentest.py engagement add htb-lab --scope-file scope.yaml
+#
+# Values: IP (10.10.10.5), CIDR (10.10.10.0/24), hostname (dc01.corp.local)
+# or *.domain (matches subdomains only, not the domain itself).
+# Exclusions always win over inclusions.
+
+include:
+  - value: 10.10.10.0/24
+    note: lab network
+  - 10.129.0.0/16
+  - value: "*.example.htb"
+    note: lab virtual hosts
+
+exclude:
+  - value: 10.10.10.1
+    note: lab gateway, out of scope

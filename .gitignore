@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Runtime data lives in ~/.local/share/aiszx by default; ignore it if redirected here.
+data/

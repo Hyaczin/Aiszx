@@ -1,0 +1,232 @@
+# Aiszx tool registry (shipped defaults).
+#
+# Override or extend in ~/.config/aiszx/tools.yaml: only the keys you change.
+# Mappings merge, lists replace. For example, to point at a git checkout:
+#
+#   tools:
+#     eyewitness:
+#       known_paths: ["~/src/EyeWitness/Python/EyeWitness.py"]
+#
+# Tool fields (all optional except description, and at least one of binaries/known_paths):
+#   binaries            executable names searched on PATH and settings.search_dirs
+#   known_paths         extra locations; globs allowed; "{git_root}" expands to each settings.git_roots entry
+#   interpreter         run the tool through an interpreter: "python3" or "pyenv:2.7" (pyenv-managed)
+#                       (non-executable *.py files default to python3)
+#   apt / pipx / go / git   install sources (pipx may be a PyPI name or a git+https URL)
+#   pipx_python         interpreter for pipx, e.g. "pyenv:3.11"
+#   install_preference  order of install methods (default: apt, pipx, go, git)
+#   version_cmd         arguments appended to the tool's command to print its version
+#   version_regex       first capture group is the version; without it a generic pattern is used
+#   min_version         older versions are reported as "incompatible"
+#   health_requires     other executables that must exist for the tool to work
+#   notes               shown in `tools show`
+version: 1
+
+settings:
+  command_timeout: 10          # seconds per version/health command
+  max_workers: 8               # concurrent version checks
+  search_dirs:                 # searched in addition to PATH
+    - ~/.local/bin             # pipx applications
+    - $GOPATH/bin
+    - ~/go/bin
+    - ~/.cargo/bin
+    - /usr/local/bin
+    - /usr/sbin                # not on a normal user's PATH on Debian
+    - /sbin
+    - /snap/bin
+  git_roots: [/opt, ~/tools, ~/htb-tools]
+  git_install_dir: ~/tools     # where `tools install` clones git-only tools
+  pipx_homes: [$PIPX_HOME, ~/.local/share/pipx, ~/.local/pipx]
+  pyenv_roots: [$PYENV_ROOT, ~/.pyenv]
+
+tools:
+  nmap:
+    description: Network discovery, port scanning and service identification
+    binaries: [nmap]
+    apt: nmap
+    version_cmd: [--version]
+    version_regex: 'Nmap version (\d+\.\d+(?:\.\d+)?)'
+    min_version: "7.80"
+
+  whatweb:
+    description: Web technology fingerprinting
+    binaries: [whatweb]
+    apt: whatweb
+    version_cmd: [--version]
+    version_regex: 'WhatWeb version (\d+\.\d+(?:\.\d+)?)'
+
+  eyewitness:
+    description: Web screenshots and server header collection
+    binaries: [eyewitness]
+    known_paths: [/usr/share/eyewitness/EyeWitness.py, "{git_root}/EyeWitness/Python/EyeWitness.py"]
+    apt: eyewitness
+    notes: Needs a headless browser and its driver; the M5 module verifies this before running.
+
+  feroxbuster:
+    description: Recursive web content discovery
+    binaries: [feroxbuster]
+    apt: feroxbuster
+    version_cmd: [--version]
+    version_regex: 'feroxbuster (\d+\.\d+(?:\.\d+)?)'
+
+  gobuster:
+    description: Web content, DNS and vhost brute-forcing
+    binaries: [gobuster]
+    apt: gobuster
+    go: github.com/OJ/gobuster/v3@latest
+    version_cmd: [version]
+
+  nikto:
+    description: Web server misconfiguration scanner (noisy)
+    binaries: [nikto]
+    apt: nikto
+
+  netexec:
+    description: SMB/LDAP/WinRM/MSSQL protocol enumeration (successor of CrackMapExec)
+    binaries: [nxc, netexec]
+    apt: netexec
+    pipx: git+https://github.com/Pennyw0rth/NetExec
+    version_cmd: [--version]
+
+  enum4linux-ng:
+    description: SMB/RPC/LDAP enumeration of Windows and Samba hosts
+    binaries: [enum4linux-ng]
+    known_paths: ["{git_root}/enum4linux-ng/enum4linux-ng.py"]
+    apt: enum4linux-ng
+    git: https://github.com/cddmp/enum4linux-ng.git
+
+  smbclient:
+    description: SMB client (share listing and access checks)
+    binaries: [smbclient]
+    apt: smbclient
+    version_cmd: [--version]
+    version_regex: 'Version (\d+\.\d+(?:\.\d+)?)'
+
+  dig:
+    description: DNS lookups and zone-transfer checks
+    binaries: [dig]
+    apt: bind9-dnsutils
+    version_cmd: [-v]
+    version_regex: 'DiG (\d+\.\d+(?:\.\d+)?)'
+
+  dnsrecon:
+    description: DNS enumeration
+    binaries: [dnsrecon]
+    apt: dnsrecon
+
+  dnsenum:
+    description: DNS enumeration
+    binaries: [dnsenum]
+    apt: dnsenum
+
+  ldapsearch:
+    description: LDAP queries (RootDSE, naming contexts)
+    binaries: [ldapsearch]
+    apt: ldap-utils
+    version_cmd: [-VV]
+    version_regex: 'ldapsearch (\d+\.\d+(?:\.\d+)?)'
+
+  impacket:
+    description: Impacket protocol scripts (AD/Kerberos/MSRPC enumeration)
+    binaries: [impacket-GetADUsers, GetADUsers.py]
+    apt: impacket-scripts
+    pipx: impacket
+    notes: The APT package installs impacket-<script> wrappers; pipx installs <script>.py.
+
+  ssh-audit:
+    description: SSH server configuration and algorithm audit
+    binaries: [ssh-audit]
+    apt: ssh-audit
+    pipx: ssh-audit
+
+  searchsploit:
+    description: Offline Exploit-DB search (used only to suggest unverified hypotheses)
+    binaries: [searchsploit]
+    apt: exploitdb
+
+  showmount:
+    description: NFS export listing
+    binaries: [showmount]
+    apt: nfs-common
+    version_cmd: [--version]
+    version_regex: 'showmount for (\d+\.\d+(?:\.\d+)?)'
+
+  snmpwalk:
+    description: SNMP queries
+    binaries: [snmpwalk]
+    apt: snmp
+    version_cmd: [-V]
+    version_regex: 'version:\s*(\d+\.\d+(?:\.\d+)?)'
+
+  onesixtyone:
+    description: SNMP community discovery (only with authorisation)
+    binaries: [onesixtyone]
+    apt: onesixtyone
+
+  curl:
+    description: HTTP client
+    binaries: [curl]
+    apt: curl
+    version_cmd: [--version]
+    version_regex: '^curl (\d+\.\d+(?:\.\d+)?)'
+
+  openssl:
+    description: TLS inspection
+    binaries: [openssl]
+    apt: openssl
+    version_cmd: [version]
+    version_regex: 'OpenSSL (\d+\.\d+(?:\.\d+)?)'
+
+  getcap:
+    description: Reads file capabilities (checks nmap's raw-socket capability)
+    binaries: [getcap]
+    apt: libcap2-bin
+
+# What each group of future modules needs. `tools check` reports readiness.
+#   requires      all must be available
+#   requires_any  at least one must be available
+#   optional      improves coverage; missing ones only degrade the capability
+capabilities:
+  recon.nmap:
+    description: Host discovery, TCP/UDP port scanning, service identification (M4)
+    requires: [nmap]
+    optional: [getcap]
+  http.fingerprint:
+    description: Web technology fingerprinting (M5)
+    requires: [whatweb]
+  http.screenshots:
+    description: Web screenshots of identified web services (M5)
+    requires: [eyewitness]
+  http.content_discovery:
+    description: Content discovery on web services (M5, noisy)
+    requires_any: [feroxbuster, gobuster]
+  http.vuln_scan:
+    description: Nikto web server checks (M5, noisy)
+    requires: [nikto]
+  tls.inspection:
+    description: TLS certificate and protocol observations (M5)
+    requires: [openssl]
+  smb.enumeration:
+    description: SMB dialects, signing, shares, host info (M6)
+    requires_any: [netexec, enum4linux-ng, smbclient]
+  dns.enumeration:
+    description: DNS records and permitted zone transfers (M6)
+    requires: [dig]
+    optional: [dnsrecon, dnsenum]
+  ldap.enumeration:
+    description: LDAP RootDSE, naming contexts, domain information (M6)
+    requires: [ldapsearch]
+    optional: [netexec, impacket]
+  ssh.audit:
+    description: SSH algorithms and host keys (M6)
+    requires: [ssh-audit]
+  nfs.enumeration:
+    description: NFS export listing (M6)
+    requires: [showmount]
+  snmp.enumeration:
+    description: SNMP information (M6, only with authorised community strings)
+    requires: [snmpwalk]
+    optional: [onesixtyone]
+  assessment.exploit_lookup:
+    description: Offline Exploit-DB lookups for version-based hypotheses (M7)
+    requires: [searchsploit]

@@ -1,0 +1,11 @@
+# Example user overrides. Copy to ~/.config/aiszx/framework.yaml and keep only
+# the keys you want to change; everything else comes from config/framework.yaml.
+
+logging:
+  console_level: INFO
+
+engagements:
+  default_slug: htb-academy
+
+# paths:
+#   data_dir: ~/aiszx-data
