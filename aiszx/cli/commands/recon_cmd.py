@@ -119,11 +119,17 @@ def cmd_services(ctx: AppContext, args: argparse.Namespace) -> int:
               f"{', '.join(f'{n}/{p}' for p, n in uncertain)}")
     scripts = [(s.key, sid, out) for s in services for sid, out in sorted(s.scripts.items())]
     if scripts:
-        print("\nNSE script output (first line):")
+        print("\nNSE script output (summary; full output in the run's raw/ files):")
         for key, sid, out in scripts[:40]:
-            first = out.strip().splitlines()[0] if out.strip() else ""
-            print(f"  {key:<9} {sid}: {first[:110]}")
+            print(f"  {key:<9} {sid}: {script_summary(out)}")
     return 0
+
+
+def script_summary(output: str, width: int = 110) -> str:
+    """Compact one-line view of multi-line NSE output: non-empty lines joined with ' | '."""
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    text = " | ".join(lines)
+    return text if len(text) <= width else text[: width - 3] + "..."
 
 
 def cmd_discover(ctx: AppContext, args: argparse.Namespace) -> int:

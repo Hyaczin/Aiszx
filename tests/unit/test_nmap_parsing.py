@@ -95,7 +95,20 @@ def svc(port, name=None, tunnel=None, product=None, method="probed", conf=10, pr
     (svc(1433, None, method="table", conf=0), ["mssql"], "low"),          # port hint only
     (svc(31337, "unknown"), ["other"], "low"),
     (svc(8000, "tcpwrapped"), ["http"], "low"),
+    (svc(512, "exec", product="netkit-rsh rexecd"), ["rservices"], "high"),
+    (svc(513, "login"), ["rservices"], "high"),
+    (svc(514, "shell", product="Netkit rshd"), ["rservices"], "high"),
+    (svc(2514, "shell"), ["other"], "low"),                                 # name alone is not enough
 ])
+
+
+def test_script_summary():
+    from aiszx.cli.commands.recon_cmd import script_summary
+
+    assert script_summary("\n  /: \n    PHPSESSID: \n      httponly flag not set\n") == \
+        "/: | PHPSESSID: | httponly flag not set"
+    assert script_summary("Admin Login") == "Admin Login"
+    assert script_summary("x" * 200).endswith("...") and len(script_summary("x" * 200)) == 110
 def test_classification(classifier, record, categories, confidence):
     c = classifier.classify(record)
     assert (c.categories, c.confidence) == (categories, confidence)
