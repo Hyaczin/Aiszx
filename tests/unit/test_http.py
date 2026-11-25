@@ -135,7 +135,8 @@ def orch(app, missing=()):
 
 
 def web_calls(tmp_path, tool):
-    return [args for t, args in (json.loads(x) for x in (tmp_path / "web.log").read_text().splitlines()) if t == tool]
+    from tests import fakelog
+    return [args for t, args in fakelog.read(tmp_path / "web.log") if t == tool]
 
 
 def http_modules():

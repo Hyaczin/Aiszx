@@ -6,7 +6,6 @@ Environment:
   FAKE_NMAP_FAIL   exit with this code after printing an error
 """
 
-import json
 import os
 import re
 import sys
@@ -14,15 +13,13 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakelog  # noqa: E402
 import nmap_samples as S  # noqa: E402
 
 
 def main() -> int:
     argv = sys.argv[1:]
-    log = os.environ.get("FAKE_NMAP_LOG")
-    if log:
-        with open(log, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(argv) + "\n")
+    fakelog.write("FAKE_NMAP_LOG", argv)
     if os.environ.get("FAKE_NMAP_FAIL"):
         print("You requested a scan type which requires root privileges.", file=sys.stderr)
         return int(os.environ["FAKE_NMAP_FAIL"])
@@ -40,14 +37,22 @@ def main() -> int:
     base = argv[argv.index("-oA") + 1]
     target = argv[-1]
     args = " ".join(argv)
+    wide = os.environ.get("FAKE_NMAP_WIDE")
+    if "--script" in argv:
+        port = argv[argv.index("-p") + 1]
+        scripts = "".join(f'<script id="{s}" output="info from {s}"/>' for s in argv[argv.index("--script") + 1].split(","))
+        Path(base + ".xml").write_text(S.NSE.format(addr=target, args=args, port=port, scripts=scripts))
+        Path(base + ".nmap").write_text("nse\n")
+        Path(base + ".gnmap").write_text("")
+        return 0
     if "-sn" in argv:
         xml = S.RANGE if "/" in target else S.DISCOVERY_UP
     elif "-sU" in argv:
         xml = S.UDP
     elif "-sV" in argv:
-        xml = S.SERVICES
+        xml = S.SERVICES_WIDE if wide else S.SERVICES
     else:
-        xml = S.TCP
+        xml = S.TCP_WIDE if wide else S.TCP
         if os.environ.get("FAKE_NMAP_HANG"):
             Path(base + ".xml").write_text(S.TRUNCATED.format(addr=target, args=args))
             Path(base + ".gnmap").write_text(S.GNMAP_TCP.format(addr=target, args=args))

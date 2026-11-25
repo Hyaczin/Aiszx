@@ -122,7 +122,7 @@ def layers(modules: list[Module]) -> list[list[Module]]:
 
     def d(mid: str) -> int:
         if mid not in depth:
-            deps = [x for x in present[mid].meta.depends_on if x in present]
+            deps = [x for x in (*present[mid].meta.depends_on, *present[mid].meta.after) if x in present]
             depth[mid] = 0 if not deps else 1 + max(d(x) for x in deps)
         return depth[mid]
 
@@ -252,6 +252,8 @@ class Orchestrator:
                 if self.cancel.is_set() or run.forced:
                     break
                 services = self.recon.latest_services(run.target.id, prefer_execution=run.eid).services
+                # re-apply the current service_map, so classification changes reach older scan results
+                services = self.classifier.apply(services)
                 planned = planner.plan(layer, engagement=run.eng, target=run.target, address=run.address,
                                        profile=run.profile, roe_max=_roe(run.eng), upstream=upstream,
                                        services=services, blocked=self._blocked(layer, all_planned, states),
@@ -581,7 +583,8 @@ def states_counter(states: dict) -> Counter:
 
 def _effective_dict(settings: ModuleSettings, module: Module) -> dict[str, Any]:
     eff = settings.effective(module)
-    return {"enabled": eff.enabled, "options": dict(eff.options), "timeout": eff.timeout,
+    options = {k: ("***" if k in module.meta.secret_options and v else v) for k, v in eff.options.items()}
+    return {"enabled": eff.enabled, "options": options, "timeout": eff.timeout,
             "max_attempts": eff.retry.max_attempts}
 
 

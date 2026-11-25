@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 5 (HTTP) complete.** On top of engagements, scope, workspaces, tool management, the orchestrator (checkpoints, retries, crash recovery and resume) and Nmap reconnaissance, Aiszx now enumerates every web service it finds. That covers status, titles and headers, cookies, robots.txt and sitemap.xml, TLS details, WhatWeb technologies, EyeWitness screenshots, content discovery and Nikto. Virtual hosts are supported without editing `/etc/hosts`. Reconnaissance, enumeration, assessment and reporting arrive in later milestones (see [Roadmap](#roadmap)). The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Tool management is described in [docs/TOOLS.md](docs/TOOLS.md), and writing modules in [docs/MODULE_DEVELOPMENT.md](docs/MODULE_DEVELOPMENT.md).
+> **Status: Milestone 6 (service enumeration) complete.** Aiszx does reconnaissance with Nmap, then enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and r-services, plus MSSQL, MySQL, RDP, SMTP and VNC through information-only NSE scripts. It never guesses credentials or exploits anything. Everything runs on top of engagements, scope, workspaces, tool management and the orchestrator (checkpoints, retries, crash recovery and resume).
 
 ---
 
@@ -279,6 +279,33 @@ The probe also records **observations** for the assessment stage (Milestone 7): 
 
 Module options (wordlists, time limits, threads, extensions, aggression) are documented in [config/modules.yaml](config/modules.yaml). Override them in `~/.config/aiszx/modules.yaml` or per engagement in `overrides.yaml`.
 
+### Service enumeration
+
+```bash
+python3 pentest.py -e lab enumerate 10.10.10.5                 # every applicable module
+python3 pentest.py -e lab enumerate 10.10.10.5 -m smb -m ldap  # by family (or exact module id)
+python3 pentest.py -e lab observations 10.10.10.5              # what the modules observed
+```
+
+Modules are planned from the services that recon identified. A module without a matching service plans no work.
+
+| Module | Service | What it does (no credentials, no brute force) |
+|--------|---------|-----------------------------------------------|
+| `smb.netexec` | SMB | OS, host and domain name, signing, SMBv1. One null-session and one guest attempt to list shares. |
+| `smb.enum4linux_ng` | SMB | `enum4linux-ng -A`: sessions, dialects, domain/OS info, and the shares, users and policy a null session reveals. No RID cycling. |
+| `smb.smbclient` | SMB | Anonymous share list. |
+| `dns.dig` | DNS | Server version, reverse lookup, SOA/NS/MX/TXT and a zone-transfer check. It queries domains from the options, the target hostname, `--vhost` names and **domains found by LDAP/SMB in the same run**. |
+| `ssh.audit` | SSH | Banner, algorithms and host keys; algorithms ssh-audit flags as weak. |
+| `ftp.anonymous` | FTP | Banner and the standard anonymous-login check; root listing if allowed. |
+| `ldap.rootdse` | LDAP | RootDSE: naming contexts, domain, DNS host name, functional levels, DC identification. |
+| `ldap.anonymous` | LDAP | Anonymous read of the default naming context: a bounded query (size limit 100) planned from RootDSE. |
+| `nfs.showmount` | NFS | Exports and allowed clients. Nothing is mounted. |
+| `snmp.walk` | SNMP | System MIB, **only with community strings you configure** (never guessed; masked in stored records). |
+| `nse.service_info` | MSSQL, MySQL, RDP, SMTP, NFS, SMB, FTP, VNC | Information-only NSE scripts per service. Script names that suggest brute force, DoS, exploitation, fuzzing or vulnerability checks are refused. |
+| `rservices.exposure` | rexec/rlogin/rsh | Passive: records the exposure for manual review. No login attempts. |
+
+`observations TARGET` lists everything recorded, for example null sessions, signing not required, readable shares, allowed zone transfers, anonymous LDAP read, world-mountable NFS exports, weak SSH algorithms and anonymous FTP. These are unverified observations; the assessment stage (Milestone 7) turns them into findings with severity and confidence. Module options are documented in [config/modules.yaml](config/modules.yaml).
+
 ### Running modules, history and resume
 
 ```bash
@@ -346,7 +373,7 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
 - `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` are shortcuts over it.
 - `full` runs reconnaissance and then enumeration in one run; assessment and reporting join in Milestones 7 and 8.
-- `services TARGET`, `web TARGET` and `discover CIDR` are additional commands.
+- `services TARGET`, `web TARGET`, `observations TARGET` and `discover CIDR` are additional commands.
 - `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
 - Commands not yet implemented (`assess`, `report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
 
@@ -372,6 +399,7 @@ aiszx/modules/        module interface (base.py), discovery (registry.py), built
 aiszx/orchestrator/   planner, executor, tool runner + scope guard, state, locks, recovery/resume, settings
 aiszx/modules/recon/  nmap modules: host_discovery, tcp_ports, service_id, udp
 aiszx/modules/http/   web modules: probe, whatweb, screenshots, content_discovery, nikto
+aiszx/modules/{smb,dns,ssh,ftp,ldap,nfs,snmp,nse,rservices}/   service enumeration modules
 aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
 aiszx/classify/       service → category classification
 aiszx/recon/          nmap command construction, host/port/service store, range discovery
@@ -389,8 +417,8 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 3 | Orchestrator: module interface, execution states, checkpoints, retries, resume, locks | **done** |
 | 4 | Nmap reconnaissance: host discovery, TCP/UDP, service ID, XML parsing | **done** |
 | 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | **done** |
-| 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | next |
-| 7 | Assessment: findings, correlation, confidence, investigation paths | |
+| 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | **done** |
+| 7 | Assessment: findings, correlation, confidence, investigation paths | next |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | |
 | 9 | Hardening and deployment | |
 
@@ -398,12 +426,14 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 
 After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 5)
+## Current limitations (Milestone 6)
 
-- **Screenshots** need EyeWitness's headless browser to work on your system. Failures are recorded and the run continues. `--vhost` names can't be screenshotted.
-- **Content discovery** is only as good as its wordlist, and is bounded by the time limit (default 10 minutes per endpoint). gobuster doesn't recurse.
-- **Nikto** items and the probe's observations are unverified indicators. Findings, with confidence and severity, come in Milestone 7.
-- **Host name hints** from redirects and certificates are not tested automatically; add them to scope and use `--vhost`.
-- Other services (SMB, DNS, LDAP, SSH, FTP, databases and so on) are enumerated from Milestone 6.
-- **UDP** scans only the profile's top-N ports and needs raw sockets; `open|filtered` stays uncertain.
+- **No authenticated enumeration.** Every module uses no credentials, or the standard anonymous, null or guest check. Supplying credentials for authenticated enumeration is not supported yet.
+- **SNMP** needs community strings you were given. Guessing them is out of scope by design.
+- **Kerberos, WinRM and RPC** have no dedicated module. RPC and SMB details come from enum4linux-ng; MSSQL, MySQL, RDP, SMTP and VNC metadata comes from information-only NSE scripts.
+- **r-services** are documented, not tested; verifying trust relationships requires login attempts.
+- Observations are unverified; findings, severity and confidence come in Milestone 7.
+- **Screenshots** need EyeWitness's headless browser to work; `--vhost` names can't be screenshotted.
+- **Content discovery** is bounded by its wordlist and time limit.
+- **UDP** scans only the profile's top-N ports.
 - POSIX permission checks are skipped when running on Windows (development only).

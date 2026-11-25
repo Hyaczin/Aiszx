@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 5 implemented. Implementation notes are in §13 (M3), §14 (M4) and §15 (M5).
+**Status:** Approved 2026-11-25. Milestones 1 to 6 implemented. Implementation notes are in §13 to §16.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -1001,3 +1001,16 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **Tool working directory.** Tools now run with their working directory set to the attempt's `raw/` folder, so files they drop there (feroxbuster state, geckodriver logs, EyeWitness output) stay with the evidence. Image files are registered as `screenshot` evidence.
 - **Folder layout.** Enumeration output goes to `enumeration/<category>/<module name>/<unit>/`, without repeating the family prefix.
 - **Observations** from the probe and Nikto stay in `parsed/result.json` until the assessment engine (Milestone 7) consumes them.
+
+---
+
+## 16. Milestone 6 implementation notes
+
+- **Twelve service modules.** `smb.netexec`, `smb.enum4linux_ng`, `smb.smbclient`, `dns.dig`, `ssh.audit`, `ftp.anonymous`, `ldap.rootdse`, `ldap.anonymous`, `nfs.showmount`, `snmp.walk`, `nse.service_info` and `rservices.exposure`. Units are planned per matching service (or per host) from the services known when the layer is planned.
+- **No credential use.**
+  - Only the standard anonymous, null and guest checks are made, each a single attempt.
+  - SNMP requires configured community strings. They are declared through `ModuleMeta.secret_options`, which masks them in run snapshots, and `Command.redact`, which masks them in stored command lines.
+  - NSE script lists are validated against a deny pattern (brute, dos, exploit, fuzz, flood, vuln, backdoor, -enum-users).
+- **`ModuleMeta.after`** is an ordering-only dependency. The module runs after those modules, if present, and sees their results, but is never skipped because they failed. `dns.dig` uses it to query the AD domain that LDAP or SMB found in the same run. `depends_on` still blocks on failure, e.g. `ldap.anonymous` on `ldap.rootdse`.
+- **Re-classification at planning time.** Services loaded for planning are re-classified with the current `service_map.yaml`, so new categories (for example `rservices`) reach existing scan results without re-scanning.
+- **`observations TARGET`** aggregates the observations from the latest run that has completed enumeration units. They remain in `parsed/result.json` until Milestone 7 stores them in a table.

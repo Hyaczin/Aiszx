@@ -6,10 +6,12 @@ FAKE_WEB_LOG: append one JSON line [tool, args] per call.
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakelog  # noqa: E402
 
 ROOT_HEADERS = ("HTTP/1.1 302 Found\r\nDate: Tue, 25 Nov 2026 12:00:00 GMT\r\nServer: Apache/2.4.52 (Ubuntu)\r\n"
                 "Location: http://box.htb/\r\nSet-Cookie: PHPSESSID=abc123; path=/\r\n"
@@ -23,9 +25,7 @@ def opt(args, name):
 
 def main() -> int:
     tool, args = sys.argv[1], sys.argv[2:]
-    if os.environ.get("FAKE_WEB_LOG"):
-        with open(os.environ["FAKE_WEB_LOG"], "a", encoding="utf-8") as fh:
-            fh.write(json.dumps([tool, args]) + "\n")
+    fakelog.write("FAKE_WEB_LOG", [tool, args])
 
     if tool == "curl":
         path = urlsplit(args[-1]).path

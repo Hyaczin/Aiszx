@@ -52,7 +52,7 @@ class ModuleRegistry:
         out: list[Module] = []
         while pending:
             ready = sorted(mid for mid, m in pending.items()
-                           if not any(d in pending for d in m.meta.depends_on))
+                           if not any(d in pending for d in (*m.meta.depends_on, *m.meta.after)))
             if not ready:  # validated at discovery, so this cannot happen
                 raise ConfigError(f"module dependency cycle among {sorted(pending)}")
             for mid in ready:
@@ -69,7 +69,7 @@ def _validate(modules: dict[str, Module]) -> None:
             raise ConfigError(f"module {mid}: timeout must be > 0 and retry.max_attempts >= 1")
         if not isinstance(meta.safety, Safety):
             raise ConfigError(f"module {mid}: invalid safety class")
-        for dep in meta.depends_on:
+        for dep in (*meta.depends_on, *meta.after):
             if dep not in modules:
                 raise ConfigError(f"module {mid} depends on unknown module {dep}")
             if STAGE_ORDER.index(modules[dep].meta.stage) > STAGE_ORDER.index(meta.stage):
@@ -83,7 +83,7 @@ def _validate(modules: dict[str, Module]) -> None:
         if state.get(mid) == 1:
             raise ConfigError(f"module dependency cycle: {' -> '.join(chain + [mid])}")
         state[mid] = 1
-        for dep in modules[mid].meta.depends_on:
+        for dep in (*modules[mid].meta.depends_on, *modules[mid].meta.after):
             visit(dep, chain + [mid])
         state[mid] = 2
 

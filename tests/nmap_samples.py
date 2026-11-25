@@ -66,3 +66,28 @@ GNMAP_TCP = ("# Nmap 7.95 scan initiated Tue Nov 25 12:00:00 2026 as: nmap {args
              "Host: {addr} ()\tStatus: Up\n"
              "Host: {addr} ()\tPorts: 22/open/tcp//ssh///, 80/open/tcp//http///, 8080/open/tcp//http-proxy///"
              "\tIgnored State: closed (65532)\n")
+
+# A host with many service types (Milestone 6 tests)
+TCP_WIDE = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="{addr}" addrtype="ipv4"/><hostnames/>
+<ports>""" + "".join(
+    f'<port protocol="tcp" portid="{p}"><state state="open" reason="syn-ack" reason_ttl="63"/></port>'
+    for p in (21, 22, 53, 389, 445, 512, 2049, 3306)) + """</ports></host>
+""" + FINISHED
+
+SERVICES_WIDE = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="{addr}" addrtype="ipv4"/><hostnames/>
+<ports>
+<port protocol="tcp" portid="21"><state state="open" reason="syn-ack"/><service name="ftp" product="vsftpd" version="3.0.3" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack"/><service name="ssh" product="OpenSSH" version="8.9p1" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="53"><state state="open" reason="syn-ack"/><service name="domain" product="ISC BIND" version="9.18" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="389"><state state="open" reason="syn-ack"/><service name="ldap" product="Microsoft Windows Active Directory LDAP" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="445"><state state="open" reason="syn-ack"/><service name="microsoft-ds" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="512"><state state="open" reason="syn-ack"/><service name="exec" product="netkit-rsh rexecd" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="2049"><state state="open" reason="syn-ack"/><service name="nfs" version="3-4" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="3306"><state state="open" reason="syn-ack"/><service name="mysql" product="MySQL" version="8.0.36" method="probed" conf="10"/></port>
+</ports></host>
+""" + FINISHED
+
+NSE = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="{addr}" addrtype="ipv4"/><hostnames/>
+<ports><port protocol="tcp" portid="{port}"><state state="open" reason="syn-ack"/><service name="x" method="table" conf="3"/>
+{scripts}</port></ports></host>
+""" + FINISHED

@@ -58,7 +58,8 @@ def orch(app, mode="capabilities", cancel=None, settings=None):
 
 
 def nmap_calls(tmp_path):
-    return [json.loads(line) for line in (tmp_path / "nmap.log").read_text().splitlines()]
+    from tests import fakelog
+    return fakelog.read(tmp_path / "nmap.log")
 
 
 def units(app, report):
@@ -223,7 +224,7 @@ def test_range_discovery_refuses_ranges_outside_scope(app, tmp_path):
         disc.run("default", "10.10.0.0/16")
     with pytest.raises(ScopeError, match="split ranges"):
         disc.run("default", "10.0.0.0/8")
-    assert not (tmp_path / "nmap.log").exists()  # nmap never started
+    assert nmap_calls(tmp_path) == []  # nmap never started
 
 
 # --- CLI ------------------------------------------------------------------------------

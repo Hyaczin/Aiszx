@@ -38,3 +38,20 @@ modules:
   #       wordlists: [/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt]
   #       extensions: [php, txt]
   #       time_limit: 20m
+
+  # --- Service enumeration (Milestone 6) ----------------------------------------
+  # No module guesses credentials. Anonymous/null/guest checks are single, standard attempts.
+  #
+  # smb.netexec:        null_session_check (true), guest_check (true)
+  # dns.dig:            domains (extra domains to query), max_domains (3), zone_transfer (true)
+  #                     Domains are also learned from LDAP/SMB results of the same run, the target
+  #                     hostname and --vhost names.
+  # ldap.anonymous:     size_limit (100) for the anonymous subtree query
+  # nse.service_info:   scripts: {category: [nse-script, ...]}. Only information scripts are accepted;
+  #                     names containing brute/dos/exploit/fuzz/flood/vuln/backdoor/-enum-users are refused.
+  # snmp.walk:          communities: AUTHORISED community strings only (secret: masked in run records);
+  #                     without them the module is skipped. Example, per engagement in overrides.yaml:
+  #   modules:
+  #     snmp.walk:
+  #       options:
+  #         communities: ["the-string-you-were-given"]

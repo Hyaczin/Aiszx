@@ -105,13 +105,15 @@ class ModuleMeta:
     timeout_seconds: int
     tools: tuple[ToolRequirement, ...] = ()
     categories: tuple[str, ...] = ()     # service categories handled (used from Milestone 4)
-    depends_on: tuple[str, ...] = ()     # module ids that must finish first *within the same run*
+    depends_on: tuple[str, ...] = ()     # module ids that must finish first *within the same run*; skipped if they fail
+    after: tuple[str, ...] = ()          # ordering only: run after these (if present) and see their results; never skipped
     retry: RetryPolicy = RetryPolicy()
     resumable: bool = False              # can continue from a previous attempt's partial output
     ok_exit_codes: tuple[int, ...] = (0,)
     max_parallel: int | None = None      # limit concurrent units of this module
     config_defaults: Mapping[str, Any] = field(default_factory=dict)
     profile_sections: tuple[str, ...] = ()  # profile keys (e.g. "nmap") that shape output: part of the config fingerprint
+    secret_options: tuple[str, ...] = ()    # option names holding credentials: masked in stored run snapshots
 
     @property
     def family(self) -> str:
