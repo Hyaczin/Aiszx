@@ -66,22 +66,24 @@ def test_recon_enumerate_assess_report_against_local_web_server(cli, web_server,
     assert cli("scope", "add", "127.0.0.1") == 0
     assert cli("target", "add", "127.0.0.1") == 0
     assert cli("doctor", "--no-tools") == 0
-    capsys.readouterr()
+
+    def json_of(*argv):
+        """Run a --json command and parse ONLY its output (earlier commands' output is discarded first)."""
+        capsys.readouterr()
+        assert cli(*argv, "--json") == 0
+        return json.loads(capsys.readouterr().out)
 
     assert cli("recon", "127.0.0.1", "--profile", "itest") in (0, 1)  # 1 = some unit (e.g. ping) not completed
-    assert cli("services", "127.0.0.1", "--json") == 0
-    services = json.loads(capsys.readouterr().out)
+    services = json_of("services", "127.0.0.1")
     svc = next(s for s in services["services"] if s["port"] == port)
     assert svc["name"] and "http" in svc["categories"]
 
     assert cli("enumerate", "127.0.0.1", "-m", "http.probe") == 0
-    assert cli("assess", "127.0.0.1", "--no-exploitdb", "--json") == 0
-    findings = json.loads(capsys.readouterr().out)["findings"]
+    findings = json_of("assess", "127.0.0.1", "--no-exploitdb")["findings"]
     rules = {f["rule_id"] for f in findings}
     assert {"HTTP-001", "HTTP-005"} <= rules  # session cookie without HttpOnly, login form
 
-    assert cli("report", "127.0.0.1", "--json") == 0
-    files = json.loads(capsys.readouterr().out)["files"]
+    files = json_of("report", "127.0.0.1")["files"]
     for path in files.values():
         text = open(path, encoding="utf-8").read()
         assert SECRET not in text and "Integration Login" in text
