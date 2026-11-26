@@ -76,7 +76,12 @@ def test_recon_enumerate_assess_report_against_local_web_server(cli, web_server,
     assert cli("recon", "127.0.0.1", "--profile", "itest") in (0, 1)  # 1 = some unit (e.g. ping) not completed
     services = json_of("services", "127.0.0.1")
     svc = next(s for s in services["services"] if s["port"] == port)
-    assert svc["name"] and "http" in svc["categories"]
+    if "http" not in svc["categories"]:  # show what each recon unit did, from the stored run history
+        runs = json_of("history", "127.0.0.1")
+        detail = json_of("history", "127.0.0.1", "--run", runs[0]["run_id"])
+        units = [(u["module_id"], u["state"], u["summary"] or u["error_message"] or u["skip_reason"])
+                 for u in detail["units"]]
+        pytest.fail(f"service on port {port} identified as {svc['name']!r} {svc['categories']}; units: {units}")
 
     assert cli("enumerate", "127.0.0.1", "-m", "http.probe") == 0
     findings = json_of("assess", "127.0.0.1", "--no-exploitdb")["findings"]
