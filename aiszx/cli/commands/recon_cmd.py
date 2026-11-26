@@ -27,9 +27,9 @@ def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -
     r.set_defaults(handler=cmd_recon, command_name="recon")
 
     f = sub.add_parser(
-        "full", parents=[common], help="full workflow: reconnaissance, then enumeration of what it finds",
+        "full", parents=[common], help="full workflow: reconnaissance, enumeration of what it finds, assessment",
         description="Runs reconnaissance and enumeration in one run: enumeration modules are planned from the "
-                    "services identified moments earlier. Assessment and reporting stages arrive in Milestones 7-8.",
+                    "services identified moments earlier; findings are then assessed. Write the report with `report`.",
     )
     _target_args(f)
     f.add_argument("--vhost", action="append", default=[], metavar="NAME", help="virtual host to test; repeatable")
@@ -88,7 +88,7 @@ def cmd_recon(ctx: AppContext, args: argparse.Namespace) -> int:
 
         print("\n=== Assessment ===")
         print_report(Assessor(ctx).run(eng.slug, target.canonical), target.canonical, prefix)
-        print("note: reporting arrives in Milestone 8.")
+        print(f"Report: {prefix} report {target.canonical}")
     return code
 
 
