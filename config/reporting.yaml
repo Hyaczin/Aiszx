@@ -1,0 +1,23 @@
+# Aiszx reporting settings (shipped defaults).
+#
+# Override in ~/.config/aiszx/reporting.yaml, or per engagement in
+# <engagement dir>/overrides.yaml under a top-level `reporting:` key.
+version: 1
+
+reporting:
+  # Formats written by `report` (any of: markdown, html, json). --format on the command line wins.
+  formats: [markdown, html, json]
+  # Rows per table in Markdown/HTML before "N more" is shown. The JSON report is always complete.
+  max_table_rows: 300
+  # Observation values longer than this are shortened in Markdown/HTML (JSON keeps them whole).
+  max_value_chars: 400
+  # Include unverified hypotheses (e.g. Exploit-DB title matches) in the findings sections.
+  include_hypotheses: true
+  # Also refresh <target>/consolidated/report.* (the latest view of the target) on every report.
+  write_consolidated: true
+
+  redaction:
+    # Additional regular expressions whose matches are replaced with [REDACTED].
+    extra_patterns: []
+    # Additional key names (case-insensitive) whose values are always redacted in structured data.
+    extra_secret_keys: []

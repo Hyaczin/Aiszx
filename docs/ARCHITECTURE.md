@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 7 implemented. Implementation notes are in §13 to §17.
+**Status:** Approved 2026-11-25. Milestones 1 to 8 implemented. Implementation notes are in §13 to §18.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -1027,3 +1027,28 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
   - Findings are never deleted; findings that are no longer produced get `status = not_reproduced`.
 - **Assessments are runs** (`command = 'assess'`, no units) whose output files are registered as evidence. `resume` ignores them, and `recon --force` checks only look at `recon`/`full` runs.
 - **Exploit-DB.** searchsploit is run locally through the plain process runner (it makes no network or target contact) with product + major.minor terms. Results are always `unverified_hypothesis` with low confidence.
+
+---
+
+## 18. Milestone 8 implementation notes
+
+- **Report model.** `aiszx.reporting.builder.ReportBuilder` assembles one JSON-serialisable dict with the 15 sections. It uses the same consolidated knowledge as assessment, plus:
+  - the latest port scan per protocol;
+  - the latest service identification and web run;
+  - all findings, grouped by effective classification (analyst decision first).
+
+  Renderers only format the model. The JSON report *is* the model.
+- **Evidence paths** in the model are relative to the target directory. Renderers turn them into links relative to the output directory, so the same model is rendered both into `runs/<run>/reports/` and into `consolidated/`. Per-finding and per-module evidence lists omit empty files and command logs. The evidence index lists everything.
+- **Redaction** (`aiszx.reporting.redact`) runs on the whole model before rendering:
+  - key-based for structured data, with cookie names kept;
+  - pattern-based for free text;
+  - literal masking for configured `secret_options` values.
+
+  Only the count is reported. The module lives under `reporting/`, not `evidence/` as proposed in §3.1, because nothing else uses it yet.
+- **Escaping.**
+  - HTML: Jinja2 autoescape and a restrictive CSP meta tag. Only evidence paths become links (percent-encoded, relative, no `..`, no scheme).
+  - Markdown: a `finalize` hook escapes every interpolated value. The `Raw` type marks already-formatted output (links, code spans, macro output).
+- **Reports are runs** (`command='report'`), like assessments. Files are registered as evidence of kind `report`. `resume` and `recon --force` ignore them.
+- **Comparison** (`aiszx.reporting.compare`) is per category, because different commands produce different data. Port protocols are compared only when both runs completed the scanning module. Technologies and resources are compared only when both runs ran whatever produces them. Findings are compared through `assessment_results` snapshots. Results are saved to `<target>/history/`.
+- **Configuration.** `config/reporting.yaml` is layered like modules/profiles (shipped → user → engagement `overrides.yaml` key `reporting:`).
+- **Dependency.** Jinja2 is imported lazily, so other commands keep working until `install.sh` has installed it. `report` explains what to run if it is missing.

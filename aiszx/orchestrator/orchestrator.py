@@ -567,7 +567,9 @@ def register_evidence(store: ExecutionStore, *, eid: str, target_id: str | None,
     sensitive = set(result.sensitive_files) if result else set()
     for path in sorted(p for p in adir.rglob("*") if p.is_file()):
         rel = path.relative_to(run_dir).as_posix()
-        if "/parsed/" in f"/{rel}":
+        if rel.startswith("reports/"):
+            kind = "report"
+        elif "/parsed/" in f"/{rel}":
             kind = "parsed"
         elif path.suffix.lower() in (".png", ".jpg", ".jpeg"):
             kind = "screenshot"

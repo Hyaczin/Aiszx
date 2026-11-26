@@ -1,6 +1,6 @@
 """``history TARGET [--run RUN_ID]``: past runs of a target and the details of one run.
 
-Run-to-run comparison (`compare`) is added in Milestone 8.
+Run-to-run comparison is ``compare`` (aiszx/cli/commands/report_cmd.py).
 """
 
 from __future__ import annotations
@@ -59,8 +59,9 @@ def cmd_history(ctx: AppContext, args: argparse.Namespace) -> int:
         return 0
     snapshot = json.loads(ex["config_snapshot"])
     print(f"Run {ex['run_id']} of {target.canonical}: {ex['status']}")
+    modules = snapshot.get("modules") or []
     print(kv([
-        ("command", f"{ex['command']} -m {' -m '.join(snapshot['modules'])}"), ("profile", ex["profile"]),
+        ("command", ex["command"] + "".join(f" -m {m}" for m in modules)), ("profile", ex["profile"]),
         ("safety ceiling", snapshot.get("ceiling")), ("address", ex["pinned_address"]),
         ("started", ex["started_at"]), ("ended", ex["ended_at"]),
         ("workspace", ctx.config.data_dir / ex["workspace_path"]),

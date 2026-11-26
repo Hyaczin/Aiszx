@@ -9,7 +9,7 @@
 #
 # Usage: ./install.sh [--dev] [--system-site-packages] [--recreate]
 #   --dev                    also install test dependencies (pytest)
-#   --system-site-packages   let the venv see APT Python packages (e.g. python3-yaml) for offline installs
+#   --system-site-packages   let the venv see APT Python packages (python3-yaml, python3-jinja2) for offline installs
 #   --recreate               delete and rebuild .venv
 set -euo pipefail
 
@@ -74,8 +74,8 @@ else
 fi
 
 VPY=.venv/bin/python
-if "$VPY" -c 'import yaml' 2>/dev/null && [ "$SYSTEM_SITE" -eq 1 ]; then
-  echo "[*] PyYAML already available (system site packages); skipping pip install"
+if "$VPY" -c 'import yaml, jinja2' 2>/dev/null && [ "$SYSTEM_SITE" -eq 1 ]; then
+  echo "[*] PyYAML and Jinja2 already available (system site packages); skipping pip install"
 else
   echo "[*] installing requirements.txt into .venv"
   "$VPY" -m pip install --disable-pip-version-check -r requirements.txt

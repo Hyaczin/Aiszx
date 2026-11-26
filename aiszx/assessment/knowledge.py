@@ -49,8 +49,9 @@ class Knowledge:
 
 
 def _evidence_files(row) -> list[str]:
-    files = [o["path"] for o in json.loads(row["outputs_json"] or "[]")]
-    return [f for f in files if not f.endswith(".cmd.txt")]
+    """Files worth citing as evidence: not command-line logs, not empty (e.g. a silent stderr)."""
+    return [o["path"] for o in json.loads(row["outputs_json"] or "[]")
+            if not o["path"].endswith(".cmd.txt") and o.get("size") != 0]
 
 
 def gather(db: Database, data_dir: Path, target_id: str, target_name: str, run_id: str | None = None) -> Knowledge:

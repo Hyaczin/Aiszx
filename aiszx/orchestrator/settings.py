@@ -42,7 +42,8 @@ PROFILE_ENTRY = {"description": str, "max_safety": Choice(*SAFETY_NAMES), "nmap?
 _PROBE_RE = re.compile(r"^-P(?:E|P|M|[SAUY][0-9,\-]*|O[0-9,]*)$")
 _TCP_PORTS_RE = re.compile(r"^(all|top:\d{1,5}|\d{1,5}(?:-\d{1,5})?(?:,\d{1,5}(?:-\d{1,5})?)*)$")
 PROFILES_SCHEMA = {"version": int, "profiles": MapOf(PROFILE_ENTRY, r"^[a-z0-9][a-z0-9_-]*$")}
-OVERRIDES_SCHEMA = {"modules?": MapOf(MODULE_ENTRY, _MODULE_KEY), "profiles?": MapOf(PROFILE_ENTRY, r"^[a-z0-9][a-z0-9_-]*$")}
+OVERRIDES_SCHEMA = {"modules?": MapOf(MODULE_ENTRY, _MODULE_KEY), "profiles?": MapOf(PROFILE_ENTRY, r"^[a-z0-9][a-z0-9_-]*$"),
+                    "reporting?": dict}  # validated by aiszx.reporting.settings
 
 
 @dataclass(frozen=True)

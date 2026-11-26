@@ -1,0 +1,403 @@
+{% macro more(items) %}{% if items|length > max_rows %}
+
+*{{ items|length - max_rows }} more row(s) not shown; see report.json.*
+{% endif %}{% endmacro %}
+{% macro files(paths) %}{% for p in paths %}{{ p|link(p|short) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endmacro %}
+# Aiszx report: {{ meta.target }}
+
+Engagement **{{ engagement.name }}** ({{ engagement.slug|code }}) · generated {{ meta.generated_at }} by {{ meta.operator }} · Aiszx {{ meta.framework_version }}
+
+> **Confidential.** This report describes the security of {{ meta.target }} and is intended for the authorised engagement only.
+> Credentials, tokens, keys and hashes are redacted ({{ meta.redactions }} redaction(s)); the referenced evidence files are not.
+> Unverified hypotheses are labelled as such and are not confirmed results.
+
+{% for s in meta.sections %}
+{{ s.number }}. {{ s.title }}
+{% endfor %}
+
+## 1. Engagement information
+
+| Field | Value |
+|---|---|
+| Name | {{ engagement.name }} |
+| Identifier | {{ engagement.slug|code }} |
+| Description | {{ engagement.description or "-" }} |
+| Authorisation reference | {{ engagement.authorisation_ref or "not recorded" }} |
+| Valid from | {{ engagement.valid_from or "-" }} |
+| Valid until | {{ engagement.valid_until or "-" }} |
+| Status at report time | {{ engagement.validity }} |
+| Rules of engagement | {{ engagement.rules_of_engagement if engagement.rules_of_engagement else "defaults (no restrictions recorded)" }} |
+| Operator | {{ meta.operator }} |
+| Report generated | {{ meta.generated_at }} |
+
+## 2. Scope and exclusions
+
+{{ scope.note }}
+
+**Included**
+
+{% for r in scope.includes %}
+- {{ r.type }} {{ r.value|code }}{% if r.note %} ({{ r.note }}){% endif %}
+
+{% else %}
+- none recorded
+{% endfor %}
+
+**Excluded**
+
+{% for r in scope.excludes %}
+- {{ r.type }} {{ r.value|code }}{% if r.note %} ({{ r.note }}){% endif %}
+
+{% else %}
+- none
+{% endfor %}
+
+**Target decision:** {{ meta.target|code }} is **{{ "in scope" if scope.decision.in_scope else "OUT OF SCOPE" }}**.
+{% for r in scope.decision.reasons %}
+- {{ r }}
+{% endfor %}
+{% for w in scope.decision.warnings %}
+- warning: {{ w }}
+{% endfor %}
+
+## 3. Executive summary
+
+{% for line in summary.lines %}
+{{ line }}
+
+{% endfor %}
+{% if summary.stale_warning %}
+> **Note:** {{ summary.stale_warning }}
+
+{% endif %}
+{% if summary.top_findings %}
+**Highest-priority findings**
+
+| ID | Severity | Confidence | Classification | Finding | Where |
+|---|---|---|---|---|---|
+{% for f in summary.top_findings %}
+| {{ f.id }} | {{ f.severity|sev }} | {{ f.confidence }} | {{ f.classification|cls }} | {{ f.title }} | {{ f.where or "-" }} |
+{% endfor %}
+
+{% endif %}
+**Changes since the previous run:** {% if summary.changes.lines %}{{ summary.changes.lines|join("; ") }}.{% elif summary.changes.no_changes %}no changes in {{ summary.changes.compared|join(", ") }}.{% else %}not enough runs to compare yet.{% endif %}
+{% if summary.changes.compared %} Details: `compare {{ meta.target }}`.{% endif %}
+
+
+## 4. Target inventory
+
+| Field | Value |
+|---|---|
+| Target | {{ target.canonical|code }} ({{ target.kind }}) |
+| Status | {{ target.status }}, added {{ target.created_at }} ({{ target.source }}) |
+| Addresses | {% for a in target.addresses %}{{ a.address }} ({{ a.source }}, {{ "in scope" if a.in_scope else "OUT of scope" }}, last seen {{ a.last_seen }}){% if not loop.last %}; {% endif %}{% else %}-{% endfor %} |
+| Hostnames observed | {{ target.hostnames|join(", ") or "-" }} |
+| OS guesses | {{ target.os_guesses|join("; ") or "-" }} |
+| Notes | {{ target.notes or "-" }} |
+
+**Runs** (data in this report comes from: {{ target.runs_used|join(", ") or "none" }})
+
+| Run | Command | Profile | Status | Started | Ended |
+|---|---|---|---|---|---|
+{% for r in target.runs[:max_rows] %}
+| {{ r.run_id }} | {{ r.command }} | {{ r.profile }} | {{ r.status }} | {{ r.started_at }} | {{ r.ended_at or "-" }} |
+{% endfor %}
+{{ more(target.runs)|raw }}
+
+## 5. Host discovery
+
+{% if hosts.entries %}
+From run {{ hosts.run_id }}.
+
+| Address | Status | Method | Reason | Hostnames | OS |
+|---|---|---|---|---|---|
+{% for h in hosts.entries[:max_rows] %}
+| {{ h.address }} | {{ h.status }} | {{ h.method }} | {{ h.reason or "-" }} | {{ h.hostnames|join(", ") or "-" }} | {{ h.os|join("; ") or "-" }} |
+{% endfor %}
+{{ more(hosts.entries)|raw }}
+{% else %}
+No host discovery results recorded.
+{% endif %}
+
+## 6. Open-port inventory
+
+{% for c in ports.coverage %}
+- {{ c.protocol|upper }}: {% if c.scanned %}run {{ c.run_id }} (profile {{ c.profile }}){% else %}not scanned{% endif %}
+
+{% endfor %}
+
+{% if ports.entries %}
+| Port | State | Reason | Service |
+|---|---|---|---|
+{% for p in ports.entries[:max_rows] %}
+| {{ p.protocol }}/{{ p.port }} | {{ p.state }}{% if p.uncertain %} (unconfirmed){% endif %} | {{ p.reason or "-" }} | {{ p.service or "-" }} |
+{% endfor %}
+{{ more(ports.entries)|raw }}
+{% else %}
+No open ports recorded.
+{% endif %}
+
+## 7. Service identification
+
+{% if services.entries %}
+From run {{ services.run_id }}. Confidence is nmap's 0–10 service-detection confidence.
+
+| Service | Name | Product / version | Extra | Confidence | Categories |
+|---|---|---|---|---|---|
+{% for s in services.entries[:max_rows] %}
+| {{ s.service }}{% if s.tunnel %} ({{ s.tunnel }}){% endif %} | {{ s.name or "-" }} | {{ ((s.product or "") ~ " " ~ (s.version or ""))|trim or "-" }} | {{ s.extrainfo or "-" }} | {{ s.confidence if s.confidence is not none else "-" }} ({{ s.method or "?" }}) | {{ s.categories|join(", ") or "-" }} |
+{% endfor %}
+{{ more(services.entries)|raw }}
+
+{% for s in services.entries if s.scripts %}
+**{{ s.service }} script output**
+
+{% for sc in s.scripts %}
+{{ sc.id|code }}
+
+{{ sc.output|clip(max_value * 3)|block }}
+
+{% endfor %}
+{% endfor %}
+{% else %}
+No services identified yet.
+{% endif %}
+
+## 8. Service-specific enumeration
+
+{% for fam in enumeration.families %}
+### {{ fam.family|upper }}
+
+{% for u in fam.units %}
+**{{ u.module|code }}** · unit {{ u.unit|code }} · run {{ u.run_id }}
+
+{% if u.description %}*{{ u.description }}*
+
+{% endif %}
+{{ u.summary or "no summary" }}
+
+{% if u.newer_attempt %}
+> A newer attempt in run {{ u.newer_attempt.run_id }} ended {{ u.newer_attempt.state }}{% if u.newer_attempt.reason %} ({{ u.newer_attempt.reason|clip(200) }}){% endif %}; the result above is the latest completed one.
+
+{% endif %}
+{% if u.observations %}
+| Observation | Value |
+|---|---|
+{% for o in u.observations[:max_rows] %}
+| {{ o.key|code }} | {{ o.value|clip }}{% if o.url %} ({{ o.url }}){% endif %} |
+{% endfor %}
+{{ more(u.observations)|raw }}
+
+{% endif %}
+{% for l in u.limitations %}
+- limitation: {{ l }}
+{% if loop.last %}
+
+{% endif %}
+{% endfor %}
+{% if u.evidence %}
+Evidence: {{ files(u.evidence[:12])|raw }}{% if u.evidence|length > 12 %} (+{{ u.evidence|length - 12 }} more){% endif %}
+
+{% endif %}
+
+{% endfor %}
+{% else %}
+No service-specific enumeration has completed yet.
+{% endfor %}
+
+## 9. Web application inventory
+
+{% if web.endpoints %}
+From run {{ web.run_id }}. URLs are shown as text, not links.
+
+| URL | Status | Title | Server | Technologies |
+|---|---|---|---|---|
+{% for e in web.endpoints[:max_rows] %}
+| {{ e.url|code }} | {{ e.status_code or "-" }}{% if e.location %} → {{ e.location|clip(80) }}{% endif %} | {{ e.title|clip(80) or "-" }} | {{ e.server or "-" }} | {{ e.technologies|join(", ")|clip(160) or "-" }} |
+{% endfor %}
+{{ more(web.endpoints)|raw }}
+
+{% if web.technologies %}
+**Technologies**
+
+| Endpoint | Technology | Version | Source |
+|---|---|---|---|
+{% for t in web.technologies[:max_rows] %}
+| {{ t.endpoint|code }} | {{ t.name }} | {{ t.version or "-" }} | {{ t.source }} |
+{% endfor %}
+{{ more(web.technologies)|raw }}
+
+{% endif %}
+{% if web.resources %}
+**Discovered resources**
+
+| Resource | Status | Size | Redirect | Source |
+|---|---|---|---|---|
+{% for r in web.resources[:max_rows] %}
+| {{ r.url|code }} | {{ r.status_code or "-" }} | {{ r.content_length if r.content_length is not none else "-" }} | {{ r.redirect|clip(80) or "-" }} | {{ r.source }} |
+{% endfor %}
+{{ more(web.resources)|raw }}
+
+{% endif %}
+{% if web.screenshots %}
+**Screenshots:** {% for s in web.screenshots %}{{ s.path|link }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+
+{% endif %}
+{% else %}
+No web enumeration results.
+{% endif %}
+
+## 10. Evidence index
+
+{{ evidence.note }}
+
+{% if evidence.entries %}
+| Evidence | Run | Module / unit | Kind | SHA-256 | Bytes |
+|---|---|---|---|---|---|
+{% for v in evidence.entries[:max_rows] %}
+| {% if v.protected %}protected ({{ v.id }}){% else %}{{ v.path|link }}{% endif %} | {{ v.run_id }} | {{ v.module }}{% if v.unit %} / {{ v.unit }}{% endif %} | {{ v.kind }} | {{ (v.sha256 or "-")[:16] }}… | {{ v.size if v.size is not none else "-" }} |
+{% endfor %}
+{{ more(evidence.entries)|raw }}
+{% else %}
+No evidence recorded yet.
+{% endif %}
+
+## 11. Potential findings
+
+{% if findings.last_assessment %}
+From assessment {{ findings.last_assessment.run_id }} and earlier ones (stable IDs). {{ findings.open_count }} open finding(s).
+{% else %}
+No assessment has been run yet.
+{% endif %}
+
+{% for g in findings.groups %}
+### {{ g.label }} ({{ g.entries|length }})
+
+*{{ g.explanation }}*
+
+{% for f in g.entries %}
+#### {{ f.id }} · {{ f.title }}
+
+| Severity | Confidence | Classification | Where | Rule | First seen | Last seen |
+|---|---|---|---|---|---|---|
+| {{ f.severity|sev }} | {{ f.confidence }} | {{ f.classification|cls }}{% if f.analyst_classification %} (analyst){% endif %} | {{ f.where or "-" }} | {{ f.rule_id }} | {{ f.first_seen_at }} | {{ f.last_seen_at }} |
+
+{{ f.description }}
+
+{% if f.impact %}**Impact:** {{ f.impact }}
+
+{% endif %}
+{% if f.recommendation %}**Recommendation:** {{ f.recommendation }}
+
+{% endif %}
+{% if f.analyst_notes %}**Analyst note:** {{ f.analyst_notes }}
+
+{% endif %}
+{% if f.evidence %}
+**Evidence:**
+{% for e in f.evidence %}
+- {{ e.module|code }} {{ e.observation|code }} (run {{ e.run_id }}){% if e.files %}: {{ files(e.files)|raw }}{% endif %}
+
+{% endfor %}
+
+{% endif %}
+{% else %}
+None.
+
+{% endfor %}
+{% endfor %}
+{% if findings.hypotheses_hidden %}
+*{{ findings.hypotheses_hidden }} unverified hypothesis/hypotheses hidden by configuration.*
+
+{% endif %}
+{% if findings.false_positives %}
+### Dismissed as false positives ({{ findings.false_positives|length }})
+
+| ID | Finding | Analyst note |
+|---|---|---|
+{% for f in findings.false_positives %}
+| {{ f.id }} | {{ f.title }} | {{ f.analyst_notes or "-" }} |
+{% endfor %}
+
+{% endif %}
+{% if findings.not_reproduced %}
+### No longer reproduced ({{ findings.not_reproduced|length }})
+
+Seen in earlier assessments but not in the latest one. Kept for the record; the original evidence is unchanged.
+
+| ID | Finding | Severity | Last seen |
+|---|---|---|---|
+{% for f in findings.not_reproduced %}
+| {{ f.id }} | {{ f.title }} | {{ f.severity|sev }} | {{ f.last_seen_at }} |
+{% endfor %}
+
+{% endif %}
+## 12. Confidence and severity
+
+- **Severity:** {{ scales.severity }}
+- **Confidence:** {{ scales.confidence }}
+- {{ scales.priority }}
+
+| Classification | Meaning | Open findings |
+|---|---|---|
+{% for c in scales.classifications %}
+| {{ c.classification|cls }} | {{ c.meaning }} | {{ c.count }} |
+{% endfor %}
+
+| Severity | High confidence | Medium | Low | Total |
+|---|---|---|---|---|
+{% for row in scales.matrix %}
+| {{ row.severity|sev }} | {{ row.high }} | {{ row.medium }} | {{ row.low }} | {{ row.total }} |
+{% endfor %}
+
+## 13. Attack surface assessment
+
+{{ attack_surface.note }}
+
+{% if attack_surface.areas %}
+| Category | Services | Enumerated by | Findings | Highest severity |
+|---|---|---|---|---|
+{% for a in attack_surface.areas %}
+| {{ a.category }} | {% for s in a.services %}{{ s.service }}{% if s.banner %} ({{ s.banner|clip(60) }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} | {% for m in a.enumerated_by %}{{ m.module }}{% if not m.completed %} (incomplete){% endif %}{% if not loop.last %}, {% endif %}{% else %}fingerprint only{% endfor %} | {{ a.findings|length }}{% if a.confirmed %} ({{ a.confirmed }} confirmed){% endif %}{% if a.hypotheses %} ({{ a.hypotheses }} hypotheses){% endif %} | {{ a.highest_severity|sev if a.highest_severity else "-" }} |
+{% endfor %}
+{% else %}
+No services identified yet.
+{% endif %}
+
+## 14. Recommended manual investigation
+
+{{ investigation.note }}
+
+{% for s in investigation.steps[:max_rows] %}
+{{ loop.index }}. [{{ s.severity|sev }}] {{ s.step }} (finding {{ s.finding }}{% if s.classification == "unverified_hypothesis" %}, hypothesis{% endif %})
+{% else %}
+No investigation steps (no open findings).
+{% endfor %}
+{{ more(investigation.steps)|raw }}
+
+## 15. Limitations and incomplete checks
+
+{% for l in limitations.entries %}
+- {{ l }}
+{% endfor %}
+
+{% if limitations.incomplete_units %}
+**Module units that did not complete**
+
+| Module | Unit | State | Run | Reason | Older result used |
+|---|---|---|---|---|---|
+{% for u in limitations.incomplete_units[:max_rows] %}
+| {{ u.module }} | {{ u.unit }} | {{ u.state }} | {{ u.run_id }} | {{ u.reason|clip(160) }} | {{ u.older_result_used or "no" }} |
+{% endfor %}
+{{ more(limitations.incomplete_units)|raw }}
+
+{% endif %}
+{% if limitations.module_limitations %}
+**Limitations reported by modules**
+
+{% for l in limitations.module_limitations[:max_rows] %}
+- {{ l.module|code }} ({{ l.unit }}): {{ l.text }}
+{% endfor %}
+{{ more(limitations.module_limitations)|raw }}
+{% endif %}

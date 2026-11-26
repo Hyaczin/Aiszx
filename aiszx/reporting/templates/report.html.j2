@@ -1,0 +1,272 @@
+{% macro more(items) %}{% if items|length > max_rows %}<p class="muted">{{ items|length - max_rows }} more row(s) not shown; see report.json.</p>{% endif %}{% endmacro %}
+{% macro files(paths) %}{% for p in paths %}{{ p|link(p|short) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endmacro %}
+{% macro sevbadge(s) %}<span class="sev sev-{{ s }}">{{ s|sev }}</span>{% endmacro %}
+{% macro clsbadge(c) %}<span class="cls cls-{{ c }}">{{ c|cls }}</span>{% endmacro %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: file:; style-src 'unsafe-inline'">
+<title>Aiszx report: {{ meta.target }}</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1d1f21;--muted:#62666d;--line:#d9dbde;--card:#fff;--accent:#2457a6;--code:#f1f2f4;
+--crit:#7a1020;--high:#b3261e;--med:#b25e00;--low:#2d6a4f;--info:#4a5568;--hyp:#6b4fa0}
+@media (prefers-color-scheme:dark){:root{--bg:#16181b;--fg:#e4e6e9;--muted:#9aa0a8;--line:#30343a;--card:#1d2024;
+--accent:#7aa7ec;--code:#24282d;--crit:#ff8a9a;--high:#ff8f87;--med:#f3b25a;--low:#7cc8a2;--info:#a9b4c2;--hyp:#b9a1e8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:1.7rem;margin:.2em 0}
+h2{font-size:1.3rem;margin:2.2em 0 .6em;padding-top:.6em;border-top:1px solid var(--line)}
+h3{font-size:1.08rem;margin:1.6em 0 .5em}
+h4{font-size:1rem;margin:0 0 .4em}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;background:var(--code);border-radius:4px}
+code{padding:.08em .35em;word-break:break-all}
+pre{padding:10px 12px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:28em}
+.muted{color:var(--muted)}
+.banner{border-left:4px solid var(--accent);background:var(--card);padding:10px 14px;margin:16px 0;border-radius:4px}
+.warn{border-left-color:var(--med)}
+.scroll{overflow-x:auto;margin:.6em 0}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:.92em}
+th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{background:var(--code);font-weight:600}
+td.wrap{word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px}
+.kpi b{display:block;font-size:1.5rem}
+.sev,.cls{display:inline-block;border-radius:3px;padding:0 6px;font-size:.78em;font-weight:700;letter-spacing:.02em;border:1px solid currentColor;white-space:nowrap}
+.sev-critical{color:var(--crit)}.sev-high{color:var(--high)}.sev-medium{color:var(--med)}.sev-low{color:var(--low)}.sev-info{color:var(--info)}
+.cls{font-weight:600}.cls-unverified_hypothesis{color:var(--hyp);border-style:dashed}.cls-confirmed_observation{color:var(--low)}
+.cls-potential_vulnerability{color:var(--med)}.cls-requires_manual_validation{color:var(--accent)}.cls-false_positive{color:var(--muted)}
+.finding{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin:12px 0}
+.finding.hyp{border-style:dashed}
+.meta-line{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.9em;color:var(--muted);margin-bottom:.5em}
+details{margin:.5em 0}summary{cursor:pointer;font-weight:600}
+nav ol{columns:2;padding-left:1.4em}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.shots img{width:100%;border:1px solid var(--line);border-radius:4px}
+@media (max-width:640px){nav ol{columns:1}}
+@media print{body{background:#fff;color:#000}details{display:block}details>summary{display:none}pre{max-height:none}h2{break-before:auto}.finding{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<p class="muted">Aiszx {{ meta.framework_version }} · generated {{ meta.generated_at }} by {{ meta.operator }}</p>
+<h1>Report: {{ meta.target }}</h1>
+<p>Engagement <b>{{ engagement.name }}</b> (<code>{{ engagement.slug }}</code>)</p>
+<div class="banner"><b>Confidential.</b> This report describes the security of {{ meta.target }} and is intended for the authorised
+engagement only. Credentials, tokens, keys and hashes are redacted ({{ meta.redactions }} redaction(s)); the referenced evidence files are not.
+Unverified hypotheses are labelled and shown with dashed borders; they are not confirmed results.</div>
+<nav><ol>{% for s in meta.sections %}<li><a href="#{{ s.key }}">{{ s.title }}</a></li>{% endfor %}</ol></nav>
+</header>
+
+<section id="engagement"><h2>1. Engagement information</h2>
+<div class="scroll"><table>
+<tr><th>Name</th><td>{{ engagement.name }}</td></tr>
+<tr><th>Identifier</th><td><code>{{ engagement.slug }}</code></td></tr>
+<tr><th>Description</th><td>{{ engagement.description or "-" }}</td></tr>
+<tr><th>Authorisation reference</th><td>{{ engagement.authorisation_ref or "not recorded" }}</td></tr>
+<tr><th>Validity</th><td>{{ engagement.valid_from or "-" }} → {{ engagement.valid_until or "-" }} (status at report time: {{ engagement.validity }})</td></tr>
+<tr><th>Rules of engagement</th><td>{% if engagement.rules_of_engagement %}<code>{{ engagement.rules_of_engagement|text }}</code>{% else %}defaults (no restrictions recorded){% endif %}</td></tr>
+<tr><th>Operator</th><td>{{ meta.operator }}</td></tr>
+</table></div></section>
+
+<section id="scope"><h2>2. Scope and exclusions</h2>
+<p>{{ scope.note }}</p>
+<div class="scroll"><table><tr><th>Rule</th><th>Type</th><th>Value</th><th>Note</th></tr>
+{% for r in scope.includes %}<tr><td>include</td><td>{{ r.type }}</td><td><code>{{ r.value }}</code></td><td>{{ r.note or "" }}</td></tr>{% endfor %}
+{% for r in scope.excludes %}<tr><td><b>exclude</b></td><td>{{ r.type }}</td><td><code>{{ r.value }}</code></td><td>{{ r.note or "" }}</td></tr>{% endfor %}
+{% if not scope.includes and not scope.excludes %}<tr><td colspan="4">no rules recorded</td></tr>{% endif %}
+</table></div>
+<p><b>Target decision:</b> <code>{{ meta.target }}</code> is <b>{{ "in scope" if scope.decision.in_scope else "OUT OF SCOPE" }}</b>.</p>
+<ul>{% for r in scope.decision.reasons %}<li>{{ r }}</li>{% endfor %}{% for w in scope.decision.warnings %}<li>warning: {{ w }}</li>{% endfor %}</ul>
+</section>
+
+<section id="summary"><h2>3. Executive summary</h2>
+<div class="kpis">
+<div class="kpi"><b>{{ summary.counts.open_tcp }}</b>open TCP ports</div>
+<div class="kpi"><b>{{ summary.counts.open_udp }}</b>open UDP ports{% if summary.counts.uncertain_udp %} (+{{ summary.counts.uncertain_udp }} unconfirmed){% endif %}</div>
+<div class="kpi"><b>{{ summary.counts.services }}</b>services</div>
+<div class="kpi"><b>{{ summary.counts.web_endpoints }}</b>web endpoints</div>
+<div class="kpi"><b>{{ summary.counts.findings }}</b>open findings</div>
+<div class="kpi"><b>{{ summary.counts.by_classification.confirmed_observation }}</b>confirmed observations</div>
+<div class="kpi"><b>{{ summary.counts.by_classification.unverified_hypothesis }}</b>unverified hypotheses</div>
+</div>
+{% for line in summary.lines %}<p>{{ line }}</p>{% endfor %}
+{% if summary.stale_warning %}<div class="banner warn"><b>Note:</b> {{ summary.stale_warning }}</div>{% endif %}
+{% if summary.top_findings %}
+<h3>Highest-priority findings</h3>
+<div class="scroll"><table><tr><th>ID</th><th>Severity</th><th>Confidence</th><th>Classification</th><th>Finding</th><th>Where</th></tr>
+{% for f in summary.top_findings %}<tr><td><a href="#{{ f.id }}">{{ f.id }}</a></td><td>{{ sevbadge(f.severity) }}</td><td>{{ f.confidence }}</td><td>{{ clsbadge(f.classification) }}</td><td>{{ f.title }}</td><td class="wrap">{{ f.where or "-" }}</td></tr>{% endfor %}
+</table></div>{% endif %}
+<p><b>Changes since the previous run:</b>
+{% if summary.changes.lines %}{{ summary.changes.lines|join("; ") }}.{% elif summary.changes.no_changes %}no changes in {{ summary.changes.compared|join(", ") }}.{% else %}not enough runs to compare yet.{% endif %}
+{% if summary.changes.compared %} <span class="muted">(details: <code>compare {{ meta.target }}</code>)</span>{% endif %}</p>
+</section>
+
+<section id="target"><h2>4. Target inventory</h2>
+<div class="scroll"><table>
+<tr><th>Target</th><td><code>{{ target.canonical }}</code> ({{ target.kind }}), {{ target.status }}, added {{ target.created_at }} ({{ target.source }})</td></tr>
+<tr><th>Addresses</th><td>{% for a in target.addresses %}{{ a.address }} ({{ a.source }}, {{ "in scope" if a.in_scope else "OUT of scope" }}, last seen {{ a.last_seen }}){% if not loop.last %}<br>{% endif %}{% else %}-{% endfor %}</td></tr>
+<tr><th>Hostnames observed</th><td>{{ target.hostnames|join(", ") or "-" }}</td></tr>
+<tr><th>OS guesses</th><td>{{ target.os_guesses|join("; ") or "-" }}</td></tr>
+<tr><th>Notes</th><td>{{ target.notes or "-" }}</td></tr>
+</table></div>
+<h3>Runs</h3>
+<p class="muted">Data in this report comes from: {{ target.runs_used|join(", ") or "none" }}</p>
+<div class="scroll"><table><tr><th>Run</th><th>Command</th><th>Profile</th><th>Status</th><th>Started</th><th>Ended</th></tr>
+{% for r in target.runs[:max_rows] %}<tr><td>{{ r.run_id }}</td><td>{{ r.command }}</td><td>{{ r.profile }}</td><td>{{ r.status }}</td><td>{{ r.started_at }}</td><td>{{ r.ended_at or "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(target.runs) }}
+</section>
+
+<section id="hosts"><h2>5. Host discovery</h2>
+{% if hosts.entries %}<p class="muted">From run {{ hosts.run_id }}.</p>
+<div class="scroll"><table><tr><th>Address</th><th>Status</th><th>Method</th><th>Reason</th><th>Hostnames</th><th>OS</th></tr>
+{% for h in hosts.entries[:max_rows] %}<tr><td>{{ h.address }}</td><td>{{ h.status }}</td><td>{{ h.method }}</td><td>{{ h.reason or "-" }}</td><td>{{ h.hostnames|join(", ") or "-" }}</td><td>{{ h.os|join("; ") or "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(hosts.entries) }}
+{% else %}<p>No host discovery results recorded.</p>{% endif %}
+</section>
+
+<section id="ports"><h2>6. Open-port inventory</h2>
+<ul>{% for c in ports.coverage %}<li>{{ c.protocol|upper }}: {% if c.scanned %}run {{ c.run_id }} (profile {{ c.profile }}){% else %}not scanned{% endif %}</li>{% endfor %}</ul>
+{% if ports.entries %}
+<div class="scroll"><table><tr><th>Port</th><th>State</th><th>Reason</th><th>Service</th></tr>
+{% for p in ports.entries[:max_rows] %}<tr><td>{{ p.protocol }}/{{ p.port }}</td><td>{{ p.state }}{% if p.uncertain %} <span class="muted">(unconfirmed)</span>{% endif %}</td><td>{{ p.reason or "-" }}</td><td>{{ p.service or "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(ports.entries) }}
+{% else %}<p>No open ports recorded.</p>{% endif %}
+</section>
+
+<section id="services"><h2>7. Service identification</h2>
+{% if services.entries %}<p class="muted">From run {{ services.run_id }}. Confidence is nmap's 0–10 service-detection confidence.</p>
+<div class="scroll"><table><tr><th>Service</th><th>Name</th><th>Product / version</th><th>Extra</th><th>Confidence</th><th>Categories</th></tr>
+{% for s in services.entries[:max_rows] %}<tr><td>{{ s.service }}{% if s.tunnel %} ({{ s.tunnel }}){% endif %}</td><td>{{ s.name or "-" }}</td><td>{{ ((s.product or "") ~ " " ~ (s.version or ""))|trim or "-" }}</td><td>{{ s.extrainfo or "-" }}</td><td>{{ s.confidence if s.confidence is not none else "-" }} ({{ s.method or "?" }})</td><td>{{ s.categories|join(", ") or "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(services.entries) }}
+{% for s in services.entries if s.scripts %}
+<details><summary>{{ s.service }}: script output ({{ s.scripts|length }})</summary>
+{% for sc in s.scripts %}<p><code>{{ sc.id }}</code></p><pre>{{ sc.output|clip(max_value * 3) }}</pre>{% endfor %}
+</details>
+{% endfor %}
+{% else %}<p>No services identified yet.</p>{% endif %}
+</section>
+
+<section id="enumeration"><h2>8. Service-specific enumeration</h2>
+{% for fam in enumeration.families %}
+<h3>{{ fam.family|upper }}</h3>
+{% for u in fam.units %}
+<details{% if loop.length <= 6 %} open{% endif %}><summary><code>{{ u.module }}</code> · {{ u.unit }} · run {{ u.run_id }}</summary>
+{% if u.description %}<p class="muted">{{ u.description }}</p>{% endif %}
+<p>{{ u.summary or "no summary" }}</p>
+{% if u.newer_attempt %}<div class="banner warn">A newer attempt in run {{ u.newer_attempt.run_id }} ended {{ u.newer_attempt.state }}{% if u.newer_attempt.reason %} ({{ u.newer_attempt.reason|clip(200) }}){% endif %}; the result shown is the latest completed one.</div>{% endif %}
+{% if u.observations %}<div class="scroll"><table><tr><th>Observation</th><th>Value</th></tr>
+{% for o in u.observations[:max_rows] %}<tr><td><code>{{ o.key }}</code></td><td class="wrap">{{ o.value|clip }}{% if o.url %} <span class="muted">({{ o.url }})</span>{% endif %}</td></tr>{% endfor %}
+</table></div>{{ more(u.observations) }}{% endif %}
+{% if u.limitations %}<ul>{% for l in u.limitations %}<li>limitation: {{ l }}</li>{% endfor %}</ul>{% endif %}
+{% if u.evidence %}<p class="muted">Evidence: {{ files(u.evidence[:12]) }}{% if u.evidence|length > 12 %} (+{{ u.evidence|length - 12 }} more){% endif %}</p>{% endif %}
+</details>
+{% endfor %}
+{% else %}<p>No service-specific enumeration has completed yet.</p>
+{% endfor %}
+</section>
+
+<section id="web"><h2>9. Web application inventory</h2>
+{% if web.endpoints %}<p class="muted">From run {{ web.run_id }}. URLs reported by the target are shown as text, not links.</p>
+<div class="scroll"><table><tr><th>URL</th><th>Status</th><th>Title</th><th>Server</th><th>Technologies</th></tr>
+{% for e in web.endpoints[:max_rows] %}<tr><td class="wrap"><code>{{ e.url }}</code></td><td>{{ e.status_code or "-" }}{% if e.location %} → {{ e.location|clip(80) }}{% endif %}</td><td>{{ e.title|clip(80) or "-" }}</td><td>{{ e.server or "-" }}</td><td>{{ e.technologies|join(", ")|clip(160) or "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(web.endpoints) }}
+{% if web.technologies %}<h3>Technologies</h3><div class="scroll"><table><tr><th>Endpoint</th><th>Technology</th><th>Version</th><th>Source</th></tr>
+{% for t in web.technologies[:max_rows] %}<tr><td class="wrap"><code>{{ t.endpoint }}</code></td><td>{{ t.name }}</td><td>{{ t.version or "-" }}</td><td>{{ t.source }}</td></tr>{% endfor %}
+</table></div>{{ more(web.technologies) }}{% endif %}
+{% if web.resources %}<h3>Discovered resources</h3><div class="scroll"><table><tr><th>Resource</th><th>Status</th><th>Size</th><th>Redirect</th><th>Source</th></tr>
+{% for r in web.resources[:max_rows] %}<tr><td class="wrap"><code>{{ r.url }}</code></td><td>{{ r.status_code or "-" }}</td><td>{{ r.content_length if r.content_length is not none else "-" }}</td><td class="wrap">{{ r.redirect|clip(80) or "-" }}</td><td>{{ r.source }}</td></tr>{% endfor %}
+</table></div>{{ more(web.resources) }}{% endif %}
+{% if web.screenshots %}<h3>Screenshots</h3><div class="shots">
+{% for s in web.screenshots %}{% set h = s.path|href %}{% if h %}<figure><a href="{{ h }}"><img loading="lazy" src="{{ h }}" alt="screenshot {{ s.path }}"></a><figcaption class="muted">{{ s.description or s.path }}</figcaption></figure>{% endif %}{% endfor %}
+</div>{% endif %}
+{% else %}<p>No web enumeration results.</p>{% endif %}
+</section>
+
+<section id="evidence"><h2>10. Evidence index</h2>
+<p>{{ evidence.note }}</p>
+{% if evidence.entries %}
+<details{% if evidence.entries|length <= 40 %} open{% endif %}><summary>{{ evidence.entries|length }} file(s){% if evidence.withheld %}, {{ evidence.withheld }} protected{% endif %}</summary>
+<div class="scroll"><table><tr><th>Evidence</th><th>Run</th><th>Module / unit</th><th>Kind</th><th>SHA-256</th><th>Bytes</th></tr>
+{% for v in evidence.entries[:max_rows] %}<tr><td class="wrap">{% if v.protected %}protected ({{ v.id }}){% else %}{{ v.path|link }}{% endif %}</td><td>{{ v.run_id }}</td><td>{{ v.module }}{% if v.unit %} / {{ v.unit }}{% endif %}</td><td>{{ v.kind }}</td><td><code title="{{ v.sha256 or '' }}">{{ (v.sha256 or "-")[:16] }}…</code></td><td>{{ v.size if v.size is not none else "-" }}</td></tr>{% endfor %}
+</table></div>{{ more(evidence.entries) }}</details>
+{% else %}<p>No evidence recorded yet.</p>{% endif %}
+</section>
+
+<section id="findings"><h2>11. Potential findings</h2>
+{% if findings.last_assessment %}<p>From assessment {{ findings.last_assessment.run_id }} and earlier ones (stable IDs). {{ findings.open_count }} open finding(s).</p>
+{% else %}<p>No assessment has been run yet.</p>{% endif %}
+{% for g in findings.groups %}
+<h3>{{ g.label }} ({{ g.entries|length }})</h3>
+<p class="muted">{{ g.explanation }}</p>
+{% for f in g.entries %}
+<article class="finding{% if f.classification == 'unverified_hypothesis' %} hyp{% endif %}" id="{{ f.id }}">
+<h4>{{ f.id }} · {{ f.title }}</h4>
+<div class="meta-line">{{ sevbadge(f.severity) }} <span>confidence: {{ f.confidence }}</span> {{ clsbadge(f.classification) }}{% if f.analyst_classification %}<span>(analyst)</span>{% endif %}
+<span>where: {{ f.where or "-" }}</span><span>rule {{ f.rule_id }}</span><span>first seen {{ f.first_seen_at }}</span><span>last seen {{ f.last_seen_at }}</span></div>
+<p>{{ f.description }}</p>
+{% if f.impact %}<p><b>Impact:</b> {{ f.impact }}</p>{% endif %}
+{% if f.recommendation %}<p><b>Recommendation:</b> {{ f.recommendation }}</p>{% endif %}
+{% if f.analyst_notes %}<p><b>Analyst note:</b> {{ f.analyst_notes }}</p>{% endif %}
+{% if f.evidence %}<p><b>Evidence:</b></p><ul>{% for e in f.evidence %}<li><code>{{ e.module }}</code> <code>{{ e.observation }}</code> (run {{ e.run_id }}){% if e.files %}: {{ files(e.files) }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+</article>
+{% else %}<p class="muted">None.</p>
+{% endfor %}
+{% endfor %}
+{% if findings.hypotheses_hidden %}<p class="muted">{{ findings.hypotheses_hidden }} unverified hypothesis/hypotheses hidden by configuration.</p>{% endif %}
+{% if findings.false_positives %}<h3>Dismissed as false positives ({{ findings.false_positives|length }})</h3>
+<div class="scroll"><table><tr><th>ID</th><th>Finding</th><th>Analyst note</th></tr>
+{% for f in findings.false_positives %}<tr><td>{{ f.id }}</td><td>{{ f.title }}</td><td>{{ f.analyst_notes or "-" }}</td></tr>{% endfor %}
+</table></div>{% endif %}
+{% if findings.not_reproduced %}<h3>No longer reproduced ({{ findings.not_reproduced|length }})</h3>
+<p class="muted">Seen in earlier assessments but not in the latest one. Kept for the record; the original evidence is unchanged.</p>
+<div class="scroll"><table><tr><th>ID</th><th>Finding</th><th>Severity</th><th>Last seen</th></tr>
+{% for f in findings.not_reproduced %}<tr><td>{{ f.id }}</td><td>{{ f.title }}</td><td>{{ sevbadge(f.severity) }}</td><td>{{ f.last_seen_at }}</td></tr>{% endfor %}
+</table></div>{% endif %}
+</section>
+
+<section id="scales"><h2>12. Confidence and severity</h2>
+<ul><li><b>Severity:</b> {{ scales.severity }}</li><li><b>Confidence:</b> {{ scales.confidence }}</li><li>{{ scales.priority }}</li></ul>
+<div class="scroll"><table><tr><th>Classification</th><th>Meaning</th><th>Open findings</th></tr>
+{% for c in scales.classifications %}<tr><td>{{ clsbadge(c.classification) }}</td><td>{{ c.meaning }}</td><td>{{ c.count }}</td></tr>{% endfor %}
+</table></div>
+<div class="scroll"><table><tr><th>Severity</th><th>High confidence</th><th>Medium</th><th>Low</th><th>Total</th></tr>
+{% for row in scales.matrix %}<tr><td>{{ sevbadge(row.severity) }}</td><td>{{ row.high }}</td><td>{{ row.medium }}</td><td>{{ row.low }}</td><td><b>{{ row.total }}</b></td></tr>{% endfor %}
+</table></div>
+</section>
+
+<section id="attack_surface"><h2>13. Attack surface assessment</h2>
+<p>{{ attack_surface.note }}</p>
+{% if attack_surface.areas %}<div class="scroll"><table><tr><th>Category</th><th>Services</th><th>Enumerated by</th><th>Findings</th><th>Highest severity</th></tr>
+{% for a in attack_surface.areas %}<tr><td>{{ a.category }}</td>
+<td>{% for s in a.services %}{{ s.service }}{% if s.banner %} <span class="muted">({{ s.banner|clip(60) }})</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+<td>{% for m in a.enumerated_by %}<code>{{ m.module }}</code>{% if not m.completed %} (incomplete){% endif %}{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">fingerprint only</span>{% endfor %}</td>
+<td>{% for fid in a.findings %}<a href="#{{ fid }}">{{ fid }}</a>{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}{% if a.hypotheses %} <span class="muted">({{ a.hypotheses }} hypotheses)</span>{% endif %}</td>
+<td>{% if a.highest_severity %}{{ sevbadge(a.highest_severity) }}{% else %}-{% endif %}</td></tr>{% endfor %}
+</table></div>{% else %}<p>No services identified yet.</p>{% endif %}
+</section>
+
+<section id="investigation"><h2>14. Recommended manual investigation</h2>
+<p>{{ investigation.note }}</p>
+{% if investigation.steps %}<ol>{% for s in investigation.steps[:max_rows] %}<li>{{ sevbadge(s.severity) }} {{ s.step }} <span class="muted">(<a href="#{{ s.finding }}">{{ s.finding }}</a>{% if s.classification == "unverified_hypothesis" %}, hypothesis{% endif %})</span></li>{% endfor %}</ol>{{ more(investigation.steps) }}
+{% else %}<p>No investigation steps (no open findings).</p>{% endif %}
+</section>
+
+<section id="limitations"><h2>15. Limitations and incomplete checks</h2>
+<ul>{% for l in limitations.entries %}<li>{{ l }}</li>{% endfor %}</ul>
+{% if limitations.incomplete_units %}<h3>Module units that did not complete</h3>
+<div class="scroll"><table><tr><th>Module</th><th>Unit</th><th>State</th><th>Run</th><th>Reason</th><th>Older result used</th></tr>
+{% for u in limitations.incomplete_units[:max_rows] %}<tr><td><code>{{ u.module }}</code></td><td>{{ u.unit }}</td><td>{{ u.state }}</td><td>{{ u.run_id }}</td><td class="wrap">{{ u.reason|clip(160) }}</td><td>{{ u.older_result_used or "no" }}</td></tr>{% endfor %}
+</table></div>{{ more(limitations.incomplete_units) }}{% endif %}
+{% if limitations.module_limitations %}<h3>Limitations reported by modules</h3>
+<ul>{% for l in limitations.module_limitations[:max_rows] %}<li><code>{{ l.module }}</code> ({{ l.unit }}): {{ l.text }}</li>{% endfor %}</ul>{{ more(limitations.module_limitations) }}{% endif %}
+</section>
+</main>
+</body>
+</html>

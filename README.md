@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 7 (assessment) complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), and turns what it observed into **findings**. Each finding has a severity, a confidence, a classification, evidence references and a prioritised list of manual next steps. Findings keep stable IDs across assessments.
+> **Status: Milestone 8 (reporting and history) complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), turns what it observed into **findings** with severity, confidence, classification and evidence, writes **Markdown, HTML and JSON reports** with secrets redacted, and **compares runs** to show what changed.
 
 ---
 
@@ -14,7 +14,7 @@ Aiszx assists a human tester. It automates the repetitive parts: target and scop
 - Python **3.11+**, either Parrot's `python3` or a pyenv-managed interpreter
 - The `python3-venv` package if you use Parrot's system Python (`sudo apt install python3-venv`)
 
-Runtime Python dependency: **PyYAML** only. Everything else uses the standard library.
+Runtime Python dependencies: **PyYAML** and **Jinja2** (reports), installed into the project `.venv` by `install.sh`. Everything else uses the standard library.
 
 ## Installation
 
@@ -56,7 +56,7 @@ AISZX_PYTHON=~/.pyenv/versions/3.11.11/bin/python bash install.sh --recreate
 | What | Default location | Override |
 |------|------------------|----------|
 | Code | this repository | — |
-| Shipped defaults | `config/framework.yaml`, `config/tools.yaml` | — (don't edit; override instead) |
+| Shipped defaults | `config/*.yaml` (framework, tools, modules, profiles, service_map, reporting) | — (don't edit; override instead) |
 | Your overrides | `~/.config/aiszx/framework.yaml`, `~/.config/aiszx/tools.yaml` | `--config-dir`, `$AISZX_CONFIG_DIR`, `$XDG_CONFIG_HOME` |
 | Data (DB, logs, workspaces) | `~/.local/share/aiszx/` | `--data-dir`, `$AISZX_DATA_DIR`, `paths.data_dir`, `$XDG_DATA_HOME` |
 
@@ -71,7 +71,9 @@ Precedence, highest first: CLI flag → environment variable → user config →
     ├── runs/                        # range-level runs (later milestones)
     └── targets/<target>/
         ├── target.yaml
-        ├── history/ runs/ consolidated/ logs/target.log
+        ├── history/                 # compare_<time>.json
+        ├── consolidated/            # report.{md,html,json}: latest view, rewritten by each `report`
+        ├── runs/ logs/target.log
         └── runs/<YYYY-MM-DD_HHMMSS>/  scope/ reconnaissance/ enumeration/{http,smb,...}/
                                        evidence/{screenshots,supporting,protected}/ findings/
                                        assessment/ logs/ reports/
@@ -338,6 +340,68 @@ Offline `searchsploit` matches on product versions become **unverified hypothese
 - **Stable IDs:** a finding keeps its ID across assessments. One that stops appearing becomes `not_reproduced` and is kept. Analyst decisions (`findings mark`) persist, and false positives drop out of the investigation list.
 - **Output:** each assessment writes `findings/findings.json` and `assessment/investigation.json` into its run directory, registered as evidence.
 
+### Reports
+
+```bash
+python3 pentest.py -e lab report 10.10.10.5                 # Markdown + HTML + JSON
+python3 pentest.py -e lab report 10.10.10.5 -f html         # one format (md, html, json; repeat or comma-separate)
+xdg-open ~/.local/share/aiszx/engagements/lab/targets/10.10.10.5/consolidated/report.html
+```
+
+A report covers everything known about the target: the latest result of every module across all runs (the same consolidated view `assess` uses) and the current findings. It has the 15 sections of the specification:
+
+1. engagement information
+2. scope and exclusions
+3. executive summary
+4. target inventory
+5. host discovery
+6. open-port inventory
+7. service identification
+8. service-specific enumeration
+9. web application inventory
+10. evidence index
+11. potential findings
+12. confidence and severity
+13. attack surface assessment
+14. recommended manual investigation
+15. limitations and incomplete checks
+
+- **Verified vs hypotheses.** Findings are grouped as confirmed observations, potential vulnerabilities, findings requiring manual validation, and unverified hypotheses. In HTML, hypotheses have dashed borders. False positives and findings that are no longer reproduced are listed separately.
+- **Evidence.** Every finding and module result links to its evidence files (relative links that work offline). The evidence index lists each file with its SHA-256. Protected evidence is listed without its location.
+- **Redaction.** Passwords, tokens, API keys, `Authorization` and cookie values, URL credentials, private keys, LM:NT hashes, JWTs, cloud keys and configured secret options (e.g. SNMP communities) are replaced with `[REDACTED]` in all three formats. Cookie *names* and flags are kept. Raw evidence files are never modified. Add patterns in `reporting.yaml`.
+- **Untrusted text is escaped.** Banners, titles and headers come from the target. HTML is autoescaped with a restrictive Content-Security-Policy, and URLs found on the target are shown as text, never as links. Markdown escapes everything that could add formatting, links or HTML.
+- **Stored as a run.** Each report is a new run (`runs/<run>/reports/`, registered as evidence, never overwritten). The same report is also written to `<target>/consolidated/` as the always-current view. Reports never scan anything.
+- **Stale data warning.** If module results are newer than the last assessment, the report says so: run `assess` first.
+
+Settings live in [config/reporting.yaml](config/reporting.yaml): formats, table row limits, whether to show hypotheses, extra redaction patterns and keys. Override them in `~/.config/aiszx/reporting.yaml` or per engagement under `reporting:` in `overrides.yaml`.
+
+### Comparing runs
+
+```bash
+python3 pentest.py -e lab compare 10.10.10.5 --latest          # two most recent runs per kind of data
+python3 pentest.py -e lab compare 10.10.10.5 --from 2026-11-25_134136 --to 2026-11-26_090000
+```
+
+Different commands produce different data (`recon` → ports and services, `enumerate` → web, `assess` → findings), so each category is compared between the two runs that hold it. Example:
+
+```
+Ports: 2026-11-25_134136 (run, standard) → 2026-11-26_090000 (run, standard)
+  + tcp/8080 open
+  - tcp/21 (was open)
+Services: ...
+  ~ tcp/22 version 8.9p1 Ubuntu 3ubuntu0.10 → 8.9p1 Ubuntu 3ubuntu0.13
+Findings: 2026-11-25_233936 (assess, -) → 2026-11-26_091500 (assess, -)
+  - F-c0fb2a9a19 Apache 2.4.52: ... (no longer reproduced; kept)
+```
+
+Categories:
+- **Ports:** newly open, no longer open, state changes.
+- **Services:** new, removed, changed product/version.
+- **Web:** endpoints, technologies (added, removed, version changes), discovered resources.
+- **Findings:** new, no longer reproduced, severity/confidence/classification changes.
+
+A protocol is compared only if both runs scanned it, so a missing UDP scan never shows up as "closed" ports. Technologies and resources are compared only if both runs ran the module that produces them. Different profiles are flagged, because port coverage differs. Each comparison is saved to `<target>/history/compare_<time>.json`. Nothing is ever deleted.
+
 ### Running modules, history and resume
 
 ```bash
@@ -404,11 +468,10 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 - The tool registry is `config/tools.yaml` (overridable like every other config file), with code in `aiszx/tools/`.
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
 - `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` are shortcuts over it.
-- `full` runs reconnaissance and then enumeration in one run; assessment and reporting join in Milestones 7 and 8.
 - `services TARGET`, `web TARGET`, `observations TARGET`, `findings …` and `discover CIDR` are additional commands.
-- `full` runs recon, enumeration and assessment in sequence.
-- `history TARGET` currently lists runs and their details; run-to-run comparison (`compare`) arrives in Milestone 8.
-- Commands not yet implemented (`report`, `compare`) are **not registered**. They appear in the CLI in their milestones rather than as placeholders.
+- `full` runs recon, enumeration and assessment in sequence. `report` is separate, so you choose when to write one.
+- `history TARGET` lists all runs (scans, assessments, reports). `compare TARGET` shows what changed.
+- `compare --from RUN --to RUN` complements the spec's `compare --latest`.
 
 ## Development
 
@@ -434,10 +497,11 @@ aiszx/modules/recon/  nmap modules: host_discovery, tcp_ports, service_id, udp
 aiszx/modules/http/   web modules: probe, whatweb, screenshots, content_discovery, nikto
 aiszx/modules/{smb,dns,ssh,ftp,ldap,nfs,snmp,nse,rservices}/   service enumeration modules
 aiszx/assessment/     knowledge consolidation, rules, Exploit-DB hypotheses, findings engine
+aiszx/reporting/      report model (builder), redaction, Jinja2 templates, renderers, run comparison
 aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
 aiszx/classify/       service → category classification
 aiszx/recon/          nmap command construction, host/port/service store, range discovery
-config/               shipped defaults (framework, tools, modules, profiles, service_map) + templates
+config/               shipped defaults (framework, tools, modules, profiles, service_map, reporting) + templates
 tests/unit/           pytest suite
 docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadmap
 ```
@@ -453,19 +517,21 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 5 | HTTP: web probe, WhatWeb, EyeWitness, content discovery | **done** |
 | 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | **done** |
 | 7 | Assessment: findings, correlation, confidence, investigation paths | **done** |
-| 8 | Reporting and history: Markdown/HTML/JSON, run comparison | next |
-| 9 | Hardening and deployment | |
+| 8 | Reporting and history: Markdown/HTML/JSON, run comparison | **done** |
+| 9 | Hardening and deployment | next |
 
 ## Upgrading an existing installation
 
-After pulling a new version, run `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
+After pulling a new version, run `bash install.sh` if `requirements.txt` changed (Milestone 8 adds Jinja2; it reuses the existing `.venv`), then `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 7)
+## Current limitations (Milestone 8)
 
 - **The rules are a curated starting set,** not exhaustive. Add your own with `@rule("ID")` in `aiszx/assessment/rules.py`.
 - **Severity** is the rule's default for the finding type; it doesn't model business context. Adjust with analyst notes and classifications.
-- **Version-based hypotheses** come from Exploit-DB title matches and are often noisy (distribution backports). Skip them with `--no-exploitdb`.
-- **Reports** (Markdown, HTML and JSON) and run-to-run comparison arrive in Milestone 8.
+- **Version-based hypotheses** come from Exploit-DB title matches and are often noisy (distribution backports). Skip them with `--no-exploitdb`, or hide them in reports with `reporting.include_hypotheses: false`.
+- **Redaction is pattern-based.** It is deliberately broad but cannot recognise every secret format. Review reports before sharing them outside the engagement, and treat raw evidence as sensitive.
+- **Reports cover one target.** An engagement-wide report across several targets is not implemented.
+- **No PDF output.** Print the HTML report to PDF from a browser; the stylesheet has print rules.
 - **No authenticated enumeration.** SNMP needs community strings you configure.
 - **Screenshots** need EyeWitness's headless browser to work; `--vhost` names can't be screenshotted.
 - POSIX permission checks are skipped when running on Windows (development only).
