@@ -82,6 +82,7 @@ def test_recon_enumerate_assess_report_against_local_web_server(cli, web_server,
         units = [(u["module_id"], u["state"], u["summary"] or u["error_message"] or u["skip_reason"])
                  for u in detail["units"]]
         pytest.fail(f"service on port {port} identified as {svc['name']!r} {svc['categories']}; units: {units}")
+    assert svc["state"] == "open"
 
     assert cli("enumerate", "127.0.0.1", "-m", "http.probe") == 0
     findings = json_of("assess", "127.0.0.1", "--no-exploitdb")["findings"]
