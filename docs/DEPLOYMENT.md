@@ -27,7 +27,7 @@ Work through the steps in order. Each one says what you should see; if you see s
 | 3 | `bash install.sh --dry-run` | a list of `would run:` lines ending in `dry run complete`; nothing changes | follow the printed message (e.g. `sudo apt install python3-venv`) |
 | 4 | `bash install.sh --dev` | `.venv` created, PyYAML, Jinja2 and pytest installed, `Aiszx 1.0.0 initialised`, then a `doctor` summary | read the `[FAIL]` lines; each has a fix |
 | 5 | `.venv/bin/python -m pytest -q` | all tests pass (about 300) | report the failing test output |
-| 6 | `python3 pentest.py doctor` | no `[FAIL]` lines. `[WARN]` for optional items is fine. | apply the `→` suggestion under each problem |
+| 6 | `python3 pentest.py doctor` | no `[FAIL]` lines. `[WARN]` for optional items is fine. | apply the `->` suggestion under each problem |
 | 7 | `python3 pentest.py tools missing` | the list of optional tools you might install, each with a recommended method | install what you need. `tools install --interactive` asks before every step. |
 | 8 | `python3 pentest.py tools nmap-caps` | current nmap privilege mode | to enable SYN/UDP/OS scans: `tools nmap-caps --apply` (one sudo `setcap`, asks first) |
 | 9 | `.venv/bin/python -m pytest -m integration -v` | the local end-to-end test passes. It scans only a web server it starts on 127.0.0.1. | needs nmap and curl; read the assertion message |
