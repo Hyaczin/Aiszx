@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from aiszx import __version__
 from aiszx.classify.classifier import Classifier
+from aiszx.core.diskspace import require_free_space
 from aiszx.core.errors import AiszxError, NotFoundError, ScopeError, ValidationError
 from aiszx.core.fsutil import atomic_write_text
 from aiszx.core.timeutil import iso
@@ -472,6 +473,7 @@ class Orchestrator:
         return eng, self.app.targets().get(eng, target_raw)
 
     def _preflight(self, eng: Engagement, target: Target):
+        require_free_space(self.app.config.data_dir, self.cfg.min_free_mb)
         validity = eng.validity()
         if validity != ACTIVE:
             raise ScopeError(f"engagement '{eng.slug}' is {validity}; testing is only allowed inside its validity window "

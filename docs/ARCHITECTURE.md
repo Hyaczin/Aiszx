@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. Milestones 1 to 8 implemented. Implementation notes are in §13 to §18.
+**Status:** Approved 2026-11-25. All milestones implemented (version 1.0.0). Implementation notes are in §13 to §19.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -1052,3 +1052,18 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **Comparison** (`aiszx.reporting.compare`) is per category, because different commands produce different data. Port protocols are compared only when both runs completed the scanning module. Technologies and resources are compared only when both runs ran whatever produces them. Findings are compared through `assessment_results` snapshots. Results are saved to `<target>/history/`.
 - **Configuration.** `config/reporting.yaml` is layered like modules/profiles (shipped → user → engagement `overrides.yaml` key `reporting:`).
 - **Dependency.** Jinja2 is imported lazily, so other commands keep working until `install.sh` has installed it. `report` explains what to run if it is missing.
+
+---
+
+## 19. Milestone 9 implementation notes
+
+- **Crash recovery.** A real-process test (`tests/crash_driver.py`) kills Aiszx with SIGKILL / TerminateProcess during a scan. `reconcile` detects the dead owner (pid, host and boot id) and marks the units `INTERRUPTED`. Stale locks are reaped, and `resume` continues with `nmap --resume`.
+- **Bug fixed by that test.** Workers post events that only the main thread writes to the database, so a crash can happen after an attempt directory was created but before the attempt was recorded. Before the fix, resume then started "attempt 1" again and wrote into the existing `attempt-01`. The executor now never reuses an existing attempt directory, and it offers the newest leftover one as the previous attempt (for `--resume`).
+- **Disk space.** `orchestrator.min_free_mb` (default 200) is checked in `_preflight` before every `run` / `resume`. Nothing is created when the check fails.
+- **Corrupted state.** `gather` records unreadable `parsed/result.json` files (`Knowledge.unreadable`) and falls back to the previous completed result of the same unit. `assess` and `report` list them as limitations. `doctor` runs `PRAGMA quick_check` and `foreign_key_check` and compares the recorded run directories with the disk.
+- **doctor** (`aiszx.maintenance.doctor`) is strictly read-only. Every check yields OK, INFO, WARN or FAIL plus a fix command. A crashing check becomes a FAIL entry instead of aborting the others.
+- **backup** (`aiszx.maintenance.backup`) uses the SQLite online backup API for the database and adds `engagements/` (and optionally logs) to a mode-0600 tar.gz with a manifest and a `.sha256` file. It refuses to write inside the data directory. `--verify` checks the hash, the manifest, path safety and `PRAGMA integrity_check`. Restore is manual by design (DEPLOYMENT.md §5).
+- **workspace stats** (§1.5 D6) is read-only. Aiszx never deletes evidence.
+- **install.sh** routes every state-changing step through `run()`, so `--dry-run` is exact. `--check` changes nothing. A normal install ends with `doctor`. No security tools or OS packages are installed by the script.
+- **Integration tests** (`pytest -m integration`, Linux) run the real pipeline: nmap, then curl, then assess, report, compare and backup, against an `http.server` the test starts on 127.0.0.1. They also check that a session cookie set by that server is redacted from all reports.
+- **Deviation:** the integration suite uses a local web server only. Local SSH, FTP and SMB servers would need root or extra packages on the test machine. Those modules are covered by fake-tool unit tests built from real tool output.

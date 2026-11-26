@@ -523,6 +523,7 @@ class ReportBuilder:
             older = self.latest_done.get(key)
             incomplete.append({"module": key[0], "unit": key[1], "state": row["state"], "run_id": row["run_id"],
                                "reason": reason, "older_result_used": older["run_id"] if older else None})
+        items += [f"Unreadable result: {u}" for u in self.k.unreadable]
         unit_limits = []
         for key, data in sorted(self.k.results.items()):
             for text in data.get("limitations", []) or []:
@@ -532,7 +533,8 @@ class ReportBuilder:
             path = self.data_dir / self.runs[last["run_id"]]["workspace_path"] / "findings" / "findings.json"
             try:
                 for note in json.loads(path.read_text(encoding="utf-8")).get("limitations", []):
-                    items.append(f"Assessment: {note}")
+                    if note not in self.k.unreadable:  # already listed above
+                        items.append(f"Assessment: {note}")
             except (OSError, ValueError):
                 items.append(f"Assessment output of {last['run_id']} could not be read ({path.name}).")
         return {"entries": items, "incomplete_units": incomplete, "module_limitations": unit_limits}

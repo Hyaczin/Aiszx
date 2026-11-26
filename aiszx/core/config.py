@@ -75,6 +75,7 @@ FRAMEWORK_SCHEMA: dict[str, Any] = {
         "stale_after_seconds": int,
         "kill_grace_seconds": int,
         "default_profile": str,
+        "min_free_mb": int,
     },
     "scope": {"resolve_hostnames": bool, "strict_hostname_resolution": bool},
     "workspace": {
@@ -190,6 +191,7 @@ class OrchestratorConfig:
     stale_after_seconds: int
     kill_grace_seconds: int
     default_profile: str
+    min_free_mb: int
 
 
 @dataclass(frozen=True)
@@ -253,6 +255,8 @@ def _build(merged: dict[str, Any], *, data_dir: Path, user_config_dir: Path, sou
     oc = merged["orchestrator"]
     if min(oc["max_workers"], oc["heartbeat_seconds"], oc["stale_after_seconds"]) < 1 or oc["kill_grace_seconds"] < 0:
         raise ConfigError("orchestrator: max_workers, heartbeat_seconds and stale_after_seconds must be >= 1")
+    if oc["min_free_mb"] < 0:
+        raise ConfigError("orchestrator.min_free_mb must be >= 0 (0 disables the check)")
     if oc["stale_after_seconds"] <= oc["heartbeat_seconds"]:
         raise ConfigError("orchestrator.stale_after_seconds must be greater than heartbeat_seconds")
 

@@ -4,6 +4,7 @@ Environment:
   FAKE_NMAP_LOG    append one JSON line with argv per invocation
   FAKE_NMAP_HANG   for TCP port scans: write truncated XML + grepable output, then sleep (to be interrupted)
   FAKE_NMAP_FAIL   exit with this code after printing an error
+  FAKE_NMAP_PIDFILE  with FAKE_NMAP_HANG: write this process's pid here before sleeping
 """
 
 import os
@@ -57,6 +58,8 @@ def main() -> int:
             Path(base + ".xml").write_text(S.TRUNCATED.format(addr=target, args=args))
             Path(base + ".gnmap").write_text(S.GNMAP_TCP.format(addr=target, args=args))
             Path(base + ".nmap").write_text("partial\n")
+            if os.environ.get("FAKE_NMAP_PIDFILE"):  # lets a crash test find and stop the orphaned scanner
+                Path(os.environ["FAKE_NMAP_PIDFILE"]).write_text(str(os.getpid()))
             sys.stdout.flush()
             time.sleep(60)
             return 0

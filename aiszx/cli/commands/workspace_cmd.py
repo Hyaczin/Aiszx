@@ -19,6 +19,38 @@ def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -
     v.add_argument("--repair", action="store_true")
     v.set_defaults(handler=cmd_verify)
 
+    s = wsub.add_parser("stats", parents=[common], help="disk usage per engagement, target and run (read-only)",
+                        description="Shows where disk space goes. Nothing is deleted: Aiszx never removes evidence "
+                                    "automatically. Remove old runs yourself only after a `backup` if you need space.")
+    s.add_argument("--all", action="store_true", help="all engagements (default: the selected engagement)")
+    s.add_argument("--top", type=int, default=10, help="number of largest runs to list (default 10)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(handler=cmd_stats)
+
+
+def cmd_stats(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aiszx.cli.output import emit_json, table
+    from aiszx.maintenance.stats import human, workspace_stats
+
+    stats = workspace_stats(ctx, None if args.all else engagement_slug(ctx, args), top=max(1, args.top))
+    if args.json:
+        emit_json(stats)
+        return 0
+    rows = []
+    for e in stats["engagements"]:
+        for t in sorted(e["targets"], key=lambda t: -t["bytes"]):
+            rows.append((e["engagement"], t["target"], t["runs"], t["files"], human(t["bytes"])))
+        if e.get("range_runs_bytes"):
+            rows.append((e["engagement"], "(range discovery runs)", "-", "-", human(e["range_runs_bytes"])))
+    print(table(rows, ("ENGAGEMENT", "TARGET", "RUNS", "FILES", "SIZE")) if rows else "No targets.")
+    if stats["largest_runs"]:
+        print("\nLargest runs")
+        print(table([(r["run_id"], r["target"], r["command"], r["status"], human(r["bytes"]))
+                     for r in stats["largest_runs"]], ("RUN", "TARGET", "COMMAND", "STATUS", "SIZE"), indent="  "))
+    print(f"\ndatabase {human(stats['database_bytes'])}, logs {human(stats['log_bytes'])}, "
+          f"total {human(stats['total_bytes'])}")
+    return 0
+
 
 def cmd_verify(ctx: AppContext, args: argparse.Namespace) -> int:
     eng = ctx.engagements().get(engagement_slug(ctx, args))

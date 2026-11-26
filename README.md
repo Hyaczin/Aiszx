@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: Milestone 8 (reporting and history) complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), turns what it observed into **findings** with severity, confidence, classification and evidence, writes **Markdown, HTML and JSON reports** with secrets redacted, and **compares runs** to show what changed.
+> **Status: version 1.0.0, all nine milestones complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), turns what it observed into **findings** with severity, confidence, classification and evidence, writes **Markdown, HTML and JSON reports** with secrets redacted, and **compares runs** to show what changed. It recovers from crashes and includes health checks (`doctor`), backups and a deployment checklist ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
 ---
 
@@ -19,10 +19,14 @@ Runtime Python dependencies: **PyYAML** and **Jinja2** (reports), installed into
 ## Installation
 
 ```bash
-git clone <your-repo-url> Aiszx     # or copy the folder into the VM
+git clone https://github.com/Hyaczin/Aiszx.git Aiszx     # or copy the folder into the VM
 cd Aiszx
-bash install.sh                      # add --dev to also install pytest
+bash install.sh --dry-run           # optional: show what would be done
+bash install.sh                     # add --dev to also install pytest
+python3 pentest.py doctor           # health check (install.sh runs it too)
 ```
+
+For a fresh machine, follow the step-by-step checklist with expected results in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). It also covers upgrades, backup and restore, offline use, troubleshooting and uninstalling.
 
 `install.sh` follows the Python isolation rules of the *Python Version Management on Parrot OS* guide:
 
@@ -37,7 +41,9 @@ Options:
 
 - `--dev`: install test dependencies.
 - `--recreate`: rebuild `.venv`, for example after switching interpreter.
-- `--system-site-packages`: reuse APT's `python3-yaml`, for an offline install.
+- `--system-site-packages`: reuse APT's `python3-yaml` and `python3-jinja2`, for an offline install.
+- `--dry-run`: print every step without changing anything.
+- `--check`: change nothing; verify `.venv` and its dependencies and run `doctor`.
 
 You don't need to activate the venv. `python3 pentest.py …` re-executes itself inside `./.venv` automatically. Set `AISZX_NO_VENV_REEXEC=1` to disable this.
 
@@ -446,8 +452,35 @@ Profiles: `conservative` (up to `active_safe`), `standard` (default, up to `acti
 
 ```bash
 python3 pentest.py workspace verify [TARGET] [--repair]
+python3 pentest.py workspace stats [--all] [--top 10]      # disk usage per target and largest runs
 ```
-`--repair` recreates missing directories and tightens protected-directory permissions. It never modifies or deletes files.
+`--repair` recreates missing directories and tightens protected-directory permissions. It never modifies or deletes files. Aiszx never deletes evidence automatically. Runs refuse to start when the data disk has less than `orchestrator.min_free_mb` (default 200 MiB) free.
+
+### Health check, backups and crash recovery
+
+```bash
+python3 pentest.py doctor                 # read-only; exit code 1 if anything FAILs
+python3 pentest.py backup                 # consistent DB snapshot + workspaces → aiszx-backups/*.tar.gz (0600)
+python3 pentest.py backup --verify ARCHIVE
+```
+
+`doctor` checks:
+- Python, the venv and dependencies;
+- every configuration file;
+- the data directory's ownership, permissions and filesystem (it warns about VMware shared folders);
+- free space and database integrity;
+- interrupted runs and locks;
+- workspaces and logs;
+- tools and nmap privileges.
+
+Each problem comes with the command that fixes it. Restore steps are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#5-backup-and-restore).
+
+**If Aiszx is killed** (crash, VM reset, kill -9), the next command notices that the owning process is gone. It marks the run's running units `INTERRUPTED` and releases the stale locks. `resume TARGET` then:
+- verifies completed units by their output hashes and reuses them;
+- continues interrupted nmap scans with `nmap --resume`;
+- writes every new attempt to a new `attempt-NN` directory, so earlier output is never overwritten, even when the crash happened before the attempt was recorded.
+
+A test suite kills a real Aiszx process mid-scan to check this.
 
 ### Exit codes
 
@@ -477,9 +510,10 @@ python3 pentest.py workspace verify [TARGET] [--repair]
 
 ```bash
 bash install.sh --dev
-.venv/bin/python -m pytest            # unit tests; no network, no external targets
+.venv/bin/python -m pytest                    # unit tests; no network, no external targets
+.venv/bin/python -m pytest -m integration -v  # real nmap/curl against a local web server on 127.0.0.1 (Linux)
 ```
-Unit tests use temporary directories and a fake DNS resolver. They run on Linux and Windows on Python 3.11+.
+Unit tests use temporary directories, fake tools and a fake DNS resolver. They run on Linux and Windows on Python 3.11+. Integration tests are opt-in. They scan only a web server they start on 127.0.0.1, and they are skipped without nmap and curl.
 
 Project layout:
 
@@ -498,12 +532,15 @@ aiszx/modules/http/   web modules: probe, whatweb, screenshots, content_discover
 aiszx/modules/{smb,dns,ssh,ftp,ldap,nfs,snmp,nse,rservices}/   service enumeration modules
 aiszx/assessment/     knowledge consolidation, rules, Exploit-DB hypotheses, findings engine
 aiszx/reporting/      report model (builder), redaction, Jinja2 templates, renderers, run comparison
+aiszx/maintenance/    doctor, workspace stats, backup/verify
 aiszx/parsers/        nmap XML (incremental, truncation-tolerant) + grepable fallback
 aiszx/classify/       service → category classification
 aiszx/recon/          nmap command construction, host/port/service store, range discovery
 config/               shipped defaults (framework, tools, modules, profiles, service_map, reporting) + templates
-tests/unit/           pytest suite
+tests/unit/           pytest suite (fakes for every external tool)
+tests/integration/    opt-in end-to-end tests with real tools on 127.0.0.1
 docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadmap
+docs/DEPLOYMENT.md    fresh-install checklist, upgrade, backup/restore, offline use, troubleshooting
 ```
 
 ## Roadmap
@@ -518,13 +555,13 @@ docs/ARCHITECTURE.md  design, schema, module interface, recovery strategy, roadm
 | 6 | Service enumeration: SMB, DNS, SSH, FTP, LDAP/AD, databases, others | **done** |
 | 7 | Assessment: findings, correlation, confidence, investigation paths | **done** |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | **done** |
-| 9 | Hardening and deployment | next |
+| 9 | Hardening and deployment | **done** |
 
 ## Upgrading an existing installation
 
-After pulling a new version, run `bash install.sh` if `requirements.txt` changed (Milestone 8 adds Jinja2; it reuses the existing `.venv`), then `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
+Run `python3 pentest.py backup`, then `git pull`, `bash install.sh` (reuses `.venv`, installs any new requirements) and `python3 pentest.py init`. It applies new database migrations (Milestone 2 adds schema v2) after backing up the database. Until you do, other commands stop and tell you to run it.
 
-## Current limitations (Milestone 8)
+## Current limitations
 
 - **The rules are a curated starting set,** not exhaustive. Add your own with `@rule("ID")` in `aiszx/assessment/rules.py`.
 - **Severity** is the rule's default for the finding type; it doesn't model business context. Adjust with analyst notes and classifications.
@@ -534,4 +571,5 @@ After pulling a new version, run `bash install.sh` if `requirements.txt` changed
 - **No PDF output.** Print the HTML report to PDF from a browser; the stylesheet has print rules.
 - **No authenticated enumeration.** SNMP needs community strings you configure.
 - **Screenshots** need EyeWitness's headless browser to work; `--vhost` names can't be screenshotted.
+- **Restore is manual** (documented). `backup` covers the whole data directory, not single engagements.
 - POSIX permission checks are skipped when running on Windows (development only).

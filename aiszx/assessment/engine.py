@@ -115,6 +115,7 @@ class Assessor:
         target = self.app.targets().get(eng, target_raw)
         k = gather(self.db, self.app.config.data_dir, target.id, target.canonical)
         drafts, notes = self.drafts(k, exploitdb_lookup=exploitdb_lookup)
+        notes = list(k.unreadable) + notes
         if not k.results:
             notes.append("no completed module results yet: run `recon`/`enumerate` first")
 

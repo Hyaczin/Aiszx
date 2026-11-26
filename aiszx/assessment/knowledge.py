@@ -40,6 +40,7 @@ class Knowledge:
     technologies: list[dict] = field(default_factory=list)
     results: dict[tuple[str, str], dict] = field(default_factory=dict)   # (module, unit) → parsed result
     runs_used: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)                 # results that could not be loaded
 
     def find(self, key: str) -> list[Observation]:
         return [o for o in self.observations if o.key == key]
@@ -70,12 +71,18 @@ def gather(db: Database, data_dir: Path, target_id: str, target_name: str, run_i
         key = (row["module_id"], row["unit_key"])
         if key in seen:
             continue
-        seen.add(key)
         try:
             data = json.loads((data_dir / row["workspace_path"] / row["output_dir"] / "parsed" / "result.json")
                               .read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+        except (OSError, ValueError) as exc:
+            # missing or corrupted (e.g. disk full, manual edit): say so, and fall back to an older result if any
+            k.unreadable.append(f"{row['module_id']} ({row['unit_key']}, run {row['run_id']}): parsed/result.json "
+                                f"could not be read ({exc.__class__.__name__}); an older result is used if one exists. "
+                                "Re-run the module or `resume` the run.")
             continue
+        seen.add(key)
         k.results[key] = data
         if row["run_id"] not in k.runs_used:
             k.runs_used.append(row["run_id"])

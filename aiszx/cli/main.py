@@ -19,6 +19,7 @@ from aiszx.cli.commands import (
     enum_cmd,
     history_cmd,
     init_cmd,
+    maintenance_cmd,
     modules_cmd,
     recon_cmd,
     report_cmd,
@@ -32,7 +33,7 @@ from aiszx.core.errors import AiszxError
 from aiszx.core.logging import get_logger, setup_logging, shutdown_logging
 
 COMMAND_MODULES = (init_cmd, engagement_cmd, target_cmd, scope_cmd, workspace_cmd, tools_cmd, modules_cmd,
-                   recon_cmd, enum_cmd, assess_cmd, report_cmd, run_cmd, history_cmd, config_cmd)
+                   recon_cmd, enum_cmd, assess_cmd, report_cmd, run_cmd, history_cmd, config_cmd, maintenance_cmd)
 GLOBAL_DEFAULTS = {"data_dir": None, "config_dir": None, "engagement": None, "verbose": 0, "quiet": False, "yes": False}
 
 

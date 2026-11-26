@@ -27,6 +27,7 @@ orchestrator:
   stale_after_seconds: 300  # a run from another host is considered dead after this long without a heartbeat
   kill_grace_seconds: 5     # SIGTERM → SIGKILL delay when stopping a tool (timeout or Ctrl+C)
   default_profile: standard # see config/profiles.yaml
+  min_free_mb: 200          # refuse to start a run when the data directory has less free space (0 = no check)
 
 scope:
   resolve_hostnames: true

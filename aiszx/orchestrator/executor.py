@@ -201,8 +201,15 @@ class Executor:
         for n in range(1, policy.max_attempts + 1):
             attempt += 1
             adir = pu.unit_dir / f"attempt-{attempt:02d}"
-            (adir / "raw").mkdir(parents=True, exist_ok=True)
-            (adir / "parsed").mkdir(parents=True, exist_ok=True)
+            # Never write into an existing attempt directory: after a hard crash the database can lag behind
+            # the filesystem (the attempt started but was not yet recorded). Keep that output untouched,
+            # use the next number, and offer the leftover as the previous attempt (e.g. for nmap --resume).
+            while adir.exists():
+                previous = adir  # the newest leftover is the most useful one to resume from
+                attempt += 1
+                adir = pu.unit_dir / f"attempt-{attempt:02d}"
+            (adir / "raw").mkdir(parents=True)
+            (adir / "parsed").mkdir(parents=True)
             self.events.put(AttemptStarted(pu, attempt, adir))
             t0 = time.monotonic()
             uctx = dataclasses.replace(ctx, previous_attempt_dir=previous, attempt_dir=adir)
