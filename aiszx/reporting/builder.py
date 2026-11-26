@@ -23,6 +23,7 @@ from aiszx import __version__
 from aiszx.assessment.knowledge import gather
 from aiszx.assessment.model import (CLASSIFICATIONS, CONFIDENCES, CONFIRMED, FALSE_POSITIVE, HYPOTHESIS, MANUAL,
                                     POTENTIAL, SCALE_HELP, SEVERITIES, priority)
+from aiszx.classify.classifier import Classifier
 from aiszx.core.timeutil import iso
 from aiszx.recon.store import ReconStore
 from aiszx.reporting.compare import PORT_MODULES, Comparator
@@ -120,6 +121,8 @@ class ReportBuilder:
         self.eng, self.target = eng, target
         self.target_dir = self.app.layout.target_dir(eng.slug, target.slug)
         self.k = gather(self.db, self.data_dir, target.id, target.canonical)
+        # re-apply the current service_map (as planning does), so older scans get today's categories
+        self.k.services = Classifier.load(user_config_dir=self.app.config.user_config_dir).apply(self.k.services)
         self.runs = {r["run_id"]: r for r in self.db.query(
             "SELECT * FROM executions WHERE target_id = ? ORDER BY started_at, run_id", (target.id,))}
         self.modules_meta = {r["id"]: r for r in self.db.query("SELECT * FROM modules")}

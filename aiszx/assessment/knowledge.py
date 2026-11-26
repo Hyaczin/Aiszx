@@ -26,7 +26,7 @@ class Observation:
 
     def ref(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "module": self.module, "unit": self.unit, "observation": self.key,
-                "files": self.files[:6]}
+                "files": self.files[:12]}
 
 
 @dataclass

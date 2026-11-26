@@ -209,6 +209,15 @@ def test_full_report(app, tmp_path, monkeypatch):
     assert res.files["markdown"].is_file()
 
 
+def test_report_reclassifies_old_scan_results(app):
+    # services stored before a service_map change carry old categories; the report uses the current map
+    scan(app, "recon.tcp_ports", "recon.service_id")
+    app.db.execute("UPDATE services SET categories_json = '[]'")
+    model = Reporter(app).run("default", TARGET, ("json",)).model
+    cats = {a["category"] for a in model["attack_surface"]["areas"]}
+    assert "smb" in cats and "other" not in cats
+
+
 def test_report_without_data_and_stale_warning(app):
     res = Reporter(app).run("default", TARGET, ("markdown",))
     model = res.model
