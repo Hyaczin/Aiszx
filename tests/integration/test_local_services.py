@@ -62,6 +62,10 @@ def test_recon_enumerate_assess_report_against_local_web_server(cli, web_server,
         "profiles:\n  itest:\n    description: integration test, one local port\n    max_safety: active_noisy\n"
         f"    nmap:\n      tcp_ports: \"{port}\"\n      discovery_probes: [\"-PS{port}\"]\n      timing: 4\n"
         "      scripts: false\n      version_all: false\n      os_detection: false\n      udp_top_ports: 0\n")
+    # nmap's signature database does not recognise this ad-hoc Python server (it answers, but nmap reports
+    # "unknown" with a fingerprint), exactly like a custom web app on an odd port. Users handle that by
+    # listing the port under `http` in their service map; the test does the same.
+    (cfg / "service_map.yaml").write_text(f"categories:\n  http:\n    ports: [{port}]\n")
     assert cli("init") == 0
     assert cli("scope", "add", "127.0.0.1") == 0
     assert cli("target", "add", "127.0.0.1") == 0
