@@ -4,3 +4,11 @@ __pycache__/
 .pytest_cache/
 # Runtime data lives in ~/.local/share/aiszx by default; ignore it if redirected here.
 data/
+
+# --- added by engram ---
+.claude/settings.local.json
+.brain/local/
+# Personal engram tooling (vault lives outside the repo)
+.claude/
+.brain/
+CLAUDE.md

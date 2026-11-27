@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. All milestones implemented (version 1.0.0). Implementation notes are in §13 to §19.
+**Status:** Approved 2026-11-25. All milestones implemented (version 1.0.0). Implementation notes are in §13 to §19. Milestone 10 (coverage expansion) is proposed in §20.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -948,6 +948,7 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 | **7** | **Assessment** | Rule engine over observations, rule library (SMB signing, anonymous FTP/LDAP/SMB, exposed DB, directory listing, outdated-version hypotheses via offline searchsploit), confidence/severity scoring, fingerprints, attack-surface prioritisation, `assess` command. | rule unit tests, classification correctness (port ≠ vuln), fingerprint stability. |
 | **8** | **Reporting & history** | Report data model, Markdown/HTML/JSON renderers (all 15 sections), redaction, evidence index, `history`, `compare --latest`, consolidated target view. | snapshot tests of reports, HTML escaping of hostile banners, diff correctness (new/closed ports, changed versions, new/irreproducible findings). |
 | **9** | **Hardening & deployment** | `install.sh` (venv, deps, init, tool check, no silent installs), integration tests with local services (python http.server, a local SSH/FTP/SMB where available), recovery chaos tests (kill -9 mid-run), docs, fresh Parrot validation checklist. | integration suite, kill/resume tests, installer dry-run. |
+| **10** | **Coverage expansion (planned)** | Hostname-hint pipeline (`hints`, `hints accept`), `http.vhost_discovery` (ffuf/gobuster vhost, `active_noisy`), `dns.ad_srv`, `rpc.endpoints` (impacket rpcdump), `dns.dnsrecon` (standard records only), information-only NSE for Redis, MongoDB, Memcached, Elasticsearch, rsync, Docker API, WinRM; new categories + rules; integration test against a local name-based vhost server. See §20. | hint collection and dedup, vhost baseline/wildcard filtering, scope gate on accept, parser fixtures per tool, rule tests, NSE deny-list still enforced. |
 
 `full TARGET --profile X` is available from Milestone 4 (recon only) and grows as each stage lands.
 
@@ -1067,3 +1068,36 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **install.sh** routes every state-changing step through `run()`, so `--dry-run` is exact. `--check` changes nothing. A normal install ends with `doctor`. No security tools or OS packages are installed by the script.
 - **Integration tests** (`pytest -m integration`, Linux) run the real pipeline: nmap, then curl, then assess, report, compare and backup, against an `http.server` the test starts on 127.0.0.1. They also check that a session cookie set by that server is redacted from all reports.
 - **Deviation:** the integration suite uses a local web server only. Local SSH, FTP and SMB servers would need root or extra packages on the test machine. Those modules are covered by fake-tool unit tests built from real tool output.
+
+---
+
+## 20. Milestone 10 plan: coverage expansion (proposed 2026-11-27, awaiting "go")
+
+**Goal.** Close the gaps an HTB-style workflow hits most often after a `full` run, without weakening any safety rule. Everything stays enumeration: no credential guessing, no exploitation, no user enumeration.
+
+**What already exists (not re-done):** certificate SANs and redirect hosts are collected as `http.hostname_hints` (rule HTTP-008); MSSQL, MySQL, RDP, SMTP, VNC, NFS, SMB and FTP get information-only NSE scripts; content discovery already falls back to gobuster; enum4linux-ng is a module.
+
+### 20.1 Work packages
+
+| # | Package | Contents | Safety |
+|---|---------|----------|--------|
+| A | **Hostname-hint pipeline** | Consolidate names from every source: TLS SANs and redirects (http.probe), the AD domain / DNS host name from LDAP RootDSE, SMB/NTLM info (netexec, `*-ntlm-info` NSE), PTR and SOA from dig. New `hints TARGET [--json]` lists each name with its sources. `hints accept TARGET NAME…` shows which names are in scope, asks for confirmation, then records them as target vhosts (stored with the target, so later `full`/`enumerate` runs include them without `--vhost`). | Never edits `/etc/hosts`. A name is used only if it passes the scope check (pinned to the in-scope IP as today) and you confirmed it. |
+| B | **`http.vhost_discovery`** | ffuf (preferred) or gobuster `vhost` against each web endpoint: requests go to the pinned in-scope IP with a varying `Host` header built from accepted base domains and a bounded wordlist. Baseline request plus wildcard/size filtering to drop catch-all responses. Results become hints (package A), not automatic targets. | `active_noisy` (off in `conservative`). Wordlist and rate bounded by profile. Only base domains you accepted are used. |
+| C | **AD and Windows without credentials** | `dns.ad_srv`: SRV lookups (`_ldap._tcp.dc._msdcs`, `_kerberos._tcp`, `_gc._tcp`) against the in-scope DNS server for the domain found in A. `rpc.endpoints`: impacket `rpcdump.py` on port 135 (anonymous endpoint-mapper listing, the same information as `rpcinfo`). WinRM: `http-title`/`http-headers` style information only, so exposure is visible. New rules: domain controller identified, WinRM exposed, RDP without NLA (from existing `rdp-enum-encryption` output), print spooler / other notable RPC interfaces exposed (from rpcdump). | No Kerberos user enumeration, no SID/RID cycling (`lookupsid` is user enumeration and stays out), no AS-REP or kerberoasting. |
+| D | **More services, information-only** | New service-map categories and NSE defaults: Redis `redis-info`, MongoDB `mongodb-info`/`mongodb-databases`, Memcached `memcached-info`, Elasticsearch (http.probe on 9200 + a `/` and `/_cat/indices?v` GET), rsync `rsync-list-modules`, Docker API `docker-version`, plus `rpcinfo` already there. Rules: unauthenticated Redis/MongoDB/Memcached/Elasticsearch/Docker API/rsync module listing. | Each check is a single read-only request, the same as connecting with the client and asking for server info. Nothing is written or dumped. The NSE deny pattern is unchanged. |
+| E | **DNS records with dnsrecon** | `dns.dnsrecon` in standard mode (`-t std`: SOA, NS, MX, A/AAAA, TXT, SRV) against in-scope name servers for accepted domains. Zone transfer stays in `dns.dig` (already scoped to authorised NS). | Subdomain brute force (`-t brt`, dnsenum) is **not** included in this milestone; it could be added later as `active_noisy` if you want it. |
+| F | **Tests and docs** | Parser fixtures from real tool output for ffuf, gobuster vhost, rpcdump, dnsrecon and every new NSE script; rule tests; classifier tests for new categories. Integration test: the local server answers differently per `Host` header, and the test checks that `http.vhost_discovery` finds the hidden name, that `hints accept` refuses a name outside scope, and that an accepted name is probed. README, DEPLOYMENT (new optional tools: ffuf), ARCHITECTURE §21 implementation notes. |  |
+
+### 20.2 Explicitly out of scope for Milestone 10
+
+- **Authenticated enumeration with credentials you supply** (netexec/ldapsearch/smbclient with creds, BloodHound collection). It is the biggest remaining gap for AD boxes, but it touches the credential rules, so it gets its own milestone with a written safety design first: credentials stored as protected evidence and never in reports, every authenticated module `intrusive` with per-run approval, scope re-checked, and no spraying (one supplied credential against the services you name).
+- **onesixtyone / SNMP community guessing.** That is credential guessing; SNMP keeps using only community strings you configure.
+- **Engagement-wide (multi-target) reports** and PDF output: candidates for a later milestone.
+
+### 20.3 Open questions before "go"
+
+1. Is ffuf acceptable as a new optional tool (APT package `ffuf` on Parrot)? gobuster `vhost` is the fallback either way.
+2. Should accepted vhosts be stored per target (proposed) or per engagement?
+3. Should `dns.dnsrecon` be included, or is `dig` enough for you?
+
+Real use should drive the final list: findings from your next few boxes (commands you had to run by hand) can replace or reorder packages before work starts.

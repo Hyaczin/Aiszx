@@ -556,6 +556,7 @@ docs/DEPLOYMENT.md    fresh-install checklist, upgrade, backup/restore, offline 
 | 7 | Assessment: findings, correlation, confidence, investigation paths | **done** |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | **done** |
 | 9 | Hardening and deployment | **done** |
+| 10 | Coverage expansion: hostname hints and vhost discovery, AD without credentials, more services (plan: [ARCHITECTURE §20](docs/ARCHITECTURE.md#20-milestone-10-plan-coverage-expansion-proposed-2026-11-27-awaiting-go)) | proposed |
 
 ## Upgrading an existing installation
 
