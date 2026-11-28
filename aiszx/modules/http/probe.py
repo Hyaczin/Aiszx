@@ -2,7 +2,7 @@
 
 Uses curl (and ``openssl s_client`` for HTTPS) through the tool runner, so every request is
 scope-checked. Redirects are recorded, not followed. Host names seen in redirects and certificate
-SANs are reported as *hints*: they are not tested until you add them (``--vhost`` / scope).
+SANs are reported as *hints*: they are not tested until you accept them (``hints accept``).
 """
 
 from __future__ import annotations
@@ -191,8 +191,8 @@ class HttpProbe(Module):
         res.artifacts.update(endpoint=endpoint.to_dict(), hostname_hints=sorted(hints), curl=curl_info)
         if hints:
             obs.append({"key": "http.hostname_hints", "value": sorted(hints), "url": ep.url})
-            res.limitations.append(f"host name(s) {', '.join(sorted(hints))} referenced but not tested; add them to "
-                                   f"scope and use `enumerate --vhost <name>` (or register them as targets)")
+            res.limitations.append(f"host name(s) {', '.join(sorted(hints))} referenced but not tested; review with "
+                                   f"`hints list {ctx.target.canonical}` and accept the ones you want")
         bits = [str(resp.status or "no response")]
         if title:
             bits.append(f"'{title}'")

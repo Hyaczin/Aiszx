@@ -1,4 +1,5 @@
-"""Stand-in for netexec / enum4linux-ng / smbclient / dig / ssh-audit / ldapsearch / showmount / snmpwalk / curl(ftp).
+"""Stand-in for netexec / enum4linux-ng / smbclient / dig / ssh-audit / ldapsearch / showmount / snmpwalk / curl(ftp)
+/ dnsrecon / impacket-rpcdump / ffuf / gobuster (vhost).
 
 Invoked as: python fake_svc.py <tool> <args...>. Output modelled on the real tools (colour codes included
 for NetExec). FAKE_SVC_LOG: append one JSON line [tool, args] per call.
@@ -57,6 +58,44 @@ corp.local.		3600	IN	SOA	dc01.corp.local. hostmaster.corp.local. 1 900 600 86400
 ;; XFR size: 4 records (messages 1, bytes 200)
 """
 
+RPCDUMP = """Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies
+
+[*] Retrieving endpoint list from 10.129.73.247
+Protocol: [MS-RPRN]: Print System Remote Protocol
+Provider: spoolsv.exe
+UUID    : 12345678-1234-ABCD-EF00-0123456789AB v1.0
+Bindings:
+          ncacn_ip_tcp:10.129.73.247[49668]
+          ncalrpc:[LRPC-0123]
+
+Protocol: [MS-SAMR]: Security Account Manager (SAM) Remote Protocol
+Provider: samsrv.dll
+UUID    : 12345778-1234-ABCD-EF00-0123456789AC v1.0
+Bindings:
+          ncacn_np:\\\\DC01[\\pipe\\lsass]
+
+Protocol: [MS-RPRN]: Print System Remote Protocol
+Provider: spoolsv.exe
+UUID    : 12345678-1234-ABCD-EF00-0123456789AB v1.0
+Bindings:
+          ncacn_np:\\\\DC01[\\pipe\\spoolss]
+
+Protocol: N/A
+Provider: N/A
+UUID    : 0B6EDBFA-4A24-4FC6-8A23-942B1ECA65D1 v1.0
+Bindings:
+          ncalrpc:[LRPC-abc]
+
+[*] Received 4 endpoints.
+"""
+DNSRECON = [{"arguments": "dnsrecon -d corp.local", "date": "2026-11-28", "type": "ScanInfo"},
+            {"type": "SOA", "domain": "corp.local", "mname": "dc01.corp.local", "address": "10.129.73.247"},
+            {"type": "NS", "domain": "corp.local", "target": "dc01.corp.local", "address": "10.129.73.247"},
+            {"type": "A", "domain": "corp.local", "name": "corp.local", "address": "10.129.73.247"},
+            {"type": "A", "domain": "corp.local", "name": "intranet.corp.local", "address": "10.129.73.247"},
+            {"type": "SRV", "domain": "corp.local", "name": "_kerberos._tcp.corp.local", "target": "dc01.corp.local",
+             "address": "10.129.73.247", "port": "88"}]
+
 
 def main() -> int:
     tool, args = sys.argv[1], sys.argv[2:]
@@ -78,7 +117,12 @@ def main() -> int:
     elif tool == "smbclient":
         print("Disk|Public|Public files\nIPC|IPC$|Remote IPC")
     elif tool == "dig":
-        if "version.bind" in args:
+        if "SRV" in args:
+            name = next(a for a in args if a.startswith("_"))
+            port = {"_ldap": 389, "_kerberos": 88, "_kpasswd": 464, "_gc": 3268}[name.split(".")[0]]
+            if name.endswith("corp.local"):
+                print(f"0 100 {port} dc01.corp.local.")
+        elif "version.bind" in args:
             print('"9.18.18-0ubuntu0.22.04.2-Ubuntu"')
         elif "-x" in args:
             print("dc01.corp.local.")
@@ -101,6 +145,24 @@ def main() -> int:
         print("< 220 (vsFTPd 3.0.3)\n> USER anonymous\n< 331 Please specify the password.\n> PASS x\n"
               "< 230 Login successful.", file=sys.stderr)
         print("pub\nreadme.txt")
+    elif tool == "dnsrecon":
+        domain = args[args.index("-d") + 1]
+        records = DNSRECON if domain == "corp.local" else DNSRECON[:1]
+        Path(args[args.index("-j") + 1]).write_text(json.dumps(records))
+        print(f"[*] std: Performing General Enumeration against: {domain}...")
+    elif tool == "impacket-rpcdump":
+        print(RPCDUMP, end="")
+    elif tool == "ffuf":  # vhost mode: the Host header carries FUZZ.<base>
+        base = next(a for a in args if a.startswith("Host: FUZZ.")).split("FUZZ.", 1)[1]
+        results = [{"input": {"FUZZ": "dev"}, "status": 200, "length": 5120, "words": 300, "redirectlocation": ""},
+                   {"input": {"FUZZ": "staging"}, "status": 302, "length": 0, "words": 1,
+                    "redirectlocation": "http://staging." + base + "/login"}]
+        Path(args[args.index("-o") + 1]).write_text(json.dumps({"results": results}))
+    elif tool == "gobuster":  # vhost mode, no wildcard filtering: catch-all answers included
+        base = args[args.index("--domain") + 1]
+        lines = [f"Found: {w}.{base} Status: 200 [Size: 1000]" for w in ("www", "mail", "test", "ftp")]
+        lines.append(f"Found: dev.{base} Status: 200 [Size: 5120]")
+        Path(args[args.index("-o") + 1]).write_text("\n".join(lines) + "\n")
     else:
         print(f"unknown fake tool {tool}", file=sys.stderr)
         return 2

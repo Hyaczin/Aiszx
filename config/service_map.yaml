@@ -73,6 +73,27 @@ categories:
   vnc:
     names: ["vnc*"]
     ports: [5900, 5901]
+  # --- Milestone 10 -------------------------------------------------------------
+  redis:
+    names: [redis]
+    ports: [6379]
+  mongodb:
+    names: [mongodb, mongod]
+    ports: [27017, 27018]
+  memcached:
+    names: [memcache, memcached]
+    ports: [11211]
+  elasticsearch:                  # nmap usually names it "http" with this product: also stays in "http"
+    names: [elasticsearch]
+    products: ["Elasticsearch*"]
+    ports: [9200]
+  rsync:
+    names: [rsync]
+    ports: [873]
+  docker:                         # Docker Engine API (2375 plain, 2376 TLS)
+    names: [docker]
+    products: ["Docker*"]
+    ports: [2375, 2376]
   rservices:                      # rexec / rlogin / rsh (legacy, cleartext, host-based trust)
     names: [exec, login, shell, rexec, rlogin, rsh]
     products: ["*rexecd*", "*rlogind*", "*rshd*"]

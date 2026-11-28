@@ -68,7 +68,7 @@ def test_web_rules_only_flag_session_cookies_and_keep_nikto_as_hypothesis():
     assert [d.discriminator for d in cookies] == ["PHPSESSID"]
     assert by_rule["HTTP-007"].classification == HYPOTHESIS and by_rule["HTTP-007"].confidence == "low"
     assert sorted(d.discriminator for d in all_drafts if d.rule_id == "HTTP-006") == ["/admin", "/backup"]
-    assert "--vhost box.htb" in by_rule["HTTP-008"].next_steps[0]
+    assert "hints accept 10.129.73.247 box.htb" in by_rule["HTTP-008"].next_steps[0]
     assert by_rule["HTTP-005"].classification == MANUAL
 
 

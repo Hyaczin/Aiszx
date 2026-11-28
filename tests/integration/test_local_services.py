@@ -24,6 +24,8 @@ pytestmark = [
 SECRET = "s3cr3tSessionValue42"
 PAGE = b"""<!doctype html><html><head><title>Integration Login</title></head>
 <body><form method="post"><input name="user"><input type="password" name="pass"></form></body></html>"""
+BASE, VHOST = "itest.local", "dev.itest.local"
+DEV_PAGE = b"<!doctype html><html><head><title>Dev Portal</title></head><body>" + b"internal build server " * 40 + b"</body></html>"
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -32,6 +34,13 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path not in ("/", "/index.html"):
             self.send_error(404)
+            return
+        if (self.headers.get("Host") or "").split(":")[0].lower() == VHOST:  # name-based virtual host
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(DEV_PAGE)))
+            self.end_headers()
+            self.wfile.write(DEV_PAGE)
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
@@ -99,3 +108,46 @@ def test_recon_enumerate_assess_report_against_local_web_server(cli, web_server,
         assert SECRET not in text and "Integration Login" in text
     assert cli("compare", "127.0.0.1") == 0
     assert cli("backup", "--out", str(tmp_path / "bk")) == 0
+
+
+@pytest.mark.skipif(not (shutil.which("ffuf") or shutil.which("gobuster")), reason="needs ffuf or gobuster")
+def test_vhost_discovery_hints_and_accept_against_local_web_server(cli, web_server, tmp_path, capsys):
+    """Milestone 10: discover a name-based virtual host, see it as a hint, accept it, and probe it."""
+    port = web_server
+    cfg = tmp_path / "cfg"
+    cfg.mkdir(exist_ok=True)
+    (cfg / "profiles.yaml").write_text(
+        "profiles:\n  itest:\n    description: integration test, one local port\n    max_safety: active_noisy\n"
+        f"    nmap:\n      tcp_ports: \"{port}\"\n      discovery_probes: [\"-PS{port}\"]\n      timing: 4\n"
+        "      scripts: false\n      version_all: false\n      os_detection: false\n      udp_top_ports: 0\n")
+    (cfg / "service_map.yaml").write_text(f"categories:\n  http:\n    ports: [{port}]\n")
+    words = tmp_path / "subdomains.txt"
+    words.write_text("www\nmail\ntest\nftp\ndev\n")
+    (cfg / "modules.yaml").write_text(
+        f"modules:\n  http.vhost_discovery:\n    options:\n      wordlists: ['{words}']\n      max_time: 60\n")
+
+    def json_of(*argv):
+        capsys.readouterr()
+        assert cli(*argv, "--json") == 0
+        return json.loads(capsys.readouterr().out)
+
+    assert cli("init") == 0
+    assert cli("scope", "add", "127.0.0.1") == 0
+    assert cli("scope", "add", "--exclude", f"outside.{BASE}") == 0
+    assert cli("target", "add", "127.0.0.1") == 0
+    assert cli("recon", "127.0.0.1", "--profile", "itest") in (0, 1)
+    assert cli("hints", "accept", "127.0.0.1", BASE, "-y") == 0
+    assert cli("hints", "accept", "127.0.0.1", f"outside.{BASE}", "-y") == 1     # excluded: refused
+
+    assert cli("enumerate", "127.0.0.1", "-m", "http.vhost_discovery", "--profile", "itest") == 0
+    hints = {h["name"]: h for h in json_of("hints", "list", "127.0.0.1")["hints"]}
+    assert VHOST in hints, hints
+    assert hints[VHOST]["status"] == "in scope" and any("virtual-host discovery" in s for s in hints[VHOST]["sources"])
+    assert not any(n.startswith(("www.", "mail.", "test.", "ftp.")) for n in hints)  # catch-all answers dropped
+
+    assert cli("hints", "accept", "127.0.0.1", VHOST, "-y") == 0
+    assert cli("enumerate", "127.0.0.1", "-m", "http.probe", "--profile", "itest") == 0
+    endpoints = json_of("web", "127.0.0.1")["endpoints"]
+    dev = next(e for e in endpoints if e["host"] == VHOST)
+    assert dev["title"] == "Dev Portal"
+    assert next(e for e in endpoints if e["host"] == BASE)["title"] == "Integration Login"

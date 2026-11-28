@@ -76,6 +76,14 @@ tools:
     go: github.com/OJ/gobuster/v3@latest
     version_cmd: [version]
 
+  ffuf:
+    description: Fast web fuzzer (used for name-based virtual-host discovery)
+    binaries: [ffuf]
+    apt: ffuf
+    go: github.com/ffuf/ffuf/v2@latest
+    version_cmd: [-V]
+    version_regex: 'version:\s*v?(\d+\.\d+(?:\.\d+)?)'
+
   nikto:
     description: Web server misconfiguration scanner (noisy)
     binaries: [nikto]
@@ -132,6 +140,13 @@ tools:
     apt: impacket-scripts
     pipx: impacket
     notes: The APT package installs impacket-<script> wrappers; pipx installs <script>.py.
+
+  impacket-rpcdump:
+    description: Impacket rpcdump (anonymous MSRPC endpoint-mapper listing)
+    binaries: [impacket-rpcdump, rpcdump.py]
+    apt: impacket-scripts
+    pipx: impacket
+    notes: Same package as `impacket`; the APT package names it impacket-rpcdump, pipx installs rpcdump.py.
 
   ssh-audit:
     description: SSH server configuration and algorithm audit
@@ -219,6 +234,9 @@ capabilities:
   http.content_discovery:
     description: Content discovery on web services (M5, noisy)
     requires_any: [feroxbuster, gobuster]
+  http.vhost_discovery:
+    description: Name-based virtual-host discovery under accepted base domains (M10, noisy)
+    requires_any: [ffuf, gobuster]
   http.vuln_scan:
     description: Nikto web server checks (M5, noisy)
     requires: [nikto]
@@ -232,6 +250,9 @@ capabilities:
     description: DNS records and permitted zone transfers (M6)
     requires: [dig]
     optional: [dnsrecon, dnsenum]
+  rpc.enumeration:
+    description: Anonymous MSRPC endpoint-mapper listing (M10)
+    requires: [impacket-rpcdump]
   ldap.enumeration:
     description: LDAP RootDSE, naming contexts, domain information (M6)
     requires: [ldapsearch]

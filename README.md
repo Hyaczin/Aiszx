@@ -4,7 +4,7 @@ A modular reconnaissance, enumeration and assessment framework for **authorised*
 
 Aiszx assists a human tester. It automates the repetitive parts: target and scope bookkeeping, workspaces, reconnaissance, service enumeration, evidence handling and reporting. It never runs exploitation, credential attacks or destructive actions on its own.
 
-> **Status: version 1.0.0, all nine milestones complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, NFS, SNMP and other services (never guessing credentials or exploiting anything), turns what it observed into **findings** with severity, confidence, classification and evidence, writes **Markdown, HTML and JSON reports** with secrets redacted, and **compares runs** to show what changed. It recovers from crashes and includes health checks (`doctor`), backups and a deployment checklist ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+> **Status: version 1.1.0, ten milestones complete.** Aiszx does reconnaissance with Nmap, enumerates web, SMB, DNS, SSH, FTP, LDAP/AD, MSRPC, NFS, SNMP, Redis, MongoDB, Elasticsearch and other services, collects **host-name hints** and discovers virtual hosts (never guessing credentials or exploiting anything), turns what it observed into **findings** with severity, confidence, classification and evidence, writes **Markdown, HTML and JSON reports** with secrets redacted, and **compares runs** to show what changed. It recovers from crashes and includes health checks (`doctor`), backups and a deployment checklist ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
 ---
 
@@ -269,7 +269,7 @@ python3 pentest.py -e htb-box-reset web 10.129.73.247                          #
 python3 pentest.py -e htb-box-reset full 10.129.73.247 --vhost box.htb         # recon + enumeration in one run
 ```
 
-`enumerate` plans from the services found by the latest `recon`. `full` plans from the services found earlier in the same run. Every web service (category `http`/`https`, excluding WinRM) becomes an endpoint for each host name: the IP, the target's hostname if it was registered by name, and each `--vhost`.
+`enumerate` plans from the services found by the latest `recon`. `full` plans from the services found earlier in the same run. Every web service (category `http`/`https`, excluding WinRM) becomes an endpoint for each host name: the IP, the target's hostname if it was registered by name, each virtual host accepted with `hints accept`, and each `--vhost`.
 
 | Module | Safety | What it does |
 |--------|--------|--------------|
@@ -278,14 +278,34 @@ python3 pentest.py -e htb-box-reset full 10.129.73.247 --vhost box.htb         #
 | `http.screenshots` | active_safe | EyeWitness screenshots, using only the URLs of identified web services, plus a report. |
 | `http.content_discovery` | active_noisy | feroxbuster, or gobuster if that's what is installed. Bounded by wordlist, time limit, threads and recursion depth. |
 | `http.nikto` | active_noisy | Nikto checks. Its items are unverified indicators. |
+| `http.vhost_discovery` | active_noisy | Name-based virtual-host discovery with ffuf (or gobuster `vhost`) under the base domains you accepted. Catch-all answers are filtered; results become hints. |
 
 `conservative` skips the noisy modules; `standard` and `comprehensive` run them.
 
-**Virtual hosts.** Aiszx always connects to the target's pinned in-scope IP. A virtual host name is only sent as the `Host` header and TLS server name (`curl --resolve`, `-H Host:`, `nikto -vhost`), so `/etc/hosts` is never edited. Host names that appear in redirects or certificate SANs are listed as **hints**; they are not tested until you pass them with `--vhost`. EyeWitness can't set a `Host` header, so screenshots cover the IP and a hostname target, and `--vhost` names are skipped (recorded as a limitation).
+**Virtual hosts.** Aiszx always connects to the target's pinned in-scope IP. A virtual host name is only sent as the `Host` header and TLS server name (`curl --resolve`, `-H Host:`, `nikto -vhost`), so `/etc/hosts` is never edited. Host names that appear in redirects, certificates, NTLM/LDAP/SMB information, DNS answers or virtual-host discovery are listed as **hints**; they are not tested until you accept them (see below) or pass them with `--vhost`. EyeWitness can't set a `Host` header, so screenshots cover the IP and a hostname target, and `--vhost` names are skipped (recorded as a limitation).
 
 The probe also records **observations** for the assessment stage (Milestone 7): missing security headers, cookies without HttpOnly, Secure or SameSite, server version disclosure, X-Powered-By, login forms, directory listings, redirects and host name hints. `web TARGET` shows endpoints, technologies, discovered paths, observations, hints and where the EyeWitness report is.
 
 Module options (wordlists, time limits, threads, extensions, aggression) are documented in [config/modules.yaml](config/modules.yaml). Override them in `~/.config/aiszx/modules.yaml` or per engagement in `overrides.yaml`.
+
+### Host-name hints and virtual hosts
+
+```bash
+python3 pentest.py -e htb-box-reset hints list 10.129.73.247                    # names seen, where, scope status
+python3 pentest.py -e htb-box-reset hints accept 10.129.73.247 box.htb          # asks first; scope-checked
+python3 pentest.py -e htb-box-reset enumerate 10.129.73.247                     # now includes box.htb
+python3 pentest.py -e htb-box-reset hints remove 10.129.73.247 box.htb
+```
+
+`hints list` collects every DNS name the modules saw for the target, with where each was seen:
+- TLS certificates (http.probe, nmap `ssl-cert`) and HTTP redirects;
+- NTLM information (`rdp-ntlm-info`, `smtp-ntlm-info`, ...), LDAP RootDSE, SMB host and domain names;
+- DNS answers (dig, dnsrecon, AD SRV records, permitted zone transfers);
+- virtual-host discovery.
+
+Nothing uses a hint until you accept it. `hints accept` checks scope (a name is evaluated as presented to the target's in-scope address; scope exclusions always win), asks for confirmation (`-y` to skip) and stores the name **for that target**. Every later `enumerate`, `full` or `run` includes accepted names automatically and re-checks their scope at the start of the run; names that fell out of scope are left out with a message. `/etc/hosts` is never edited.
+
+A typical HTB flow: `full` shows a redirect to `http://box.htb/` → `hints accept TARGET box.htb` → `enumerate TARGET` probes `box.htb` and runs `http.vhost_discovery` under it → `hints list` shows e.g. `dev.box.htb` → accept it → `enumerate` again.
 
 ### Service enumeration
 
@@ -302,14 +322,18 @@ Modules are planned from the services that recon identified. A module without a 
 | `smb.netexec` | SMB | OS, host and domain name, signing, SMBv1. One null-session and one guest attempt to list shares. |
 | `smb.enum4linux_ng` | SMB | `enum4linux-ng -A`: sessions, dialects, domain/OS info, and the shares, users and policy a null session reveals. No RID cycling. |
 | `smb.smbclient` | SMB | Anonymous share list. |
-| `dns.dig` | DNS | Server version, reverse lookup, SOA/NS/MX/TXT and a zone-transfer check. It queries domains from the options, the target hostname, `--vhost` names and **domains found by LDAP/SMB in the same run**. |
+| `dns.dig` | DNS | Server version, reverse lookup, SOA/NS/MX/TXT and a zone-transfer check. It queries domains from the options, the target hostname, accepted and `--vhost` names and **domains found by LDAP/SMB in the same run**. |
+| `dns.ad_srv` | DNS | AD SRV records (domain controllers, Kerberos, kpasswd, global catalog) for the same domains. |
+| `dns.dnsrecon` | DNS | `dnsrecon -t std` (SOA, NS, A/AAAA, MX, TXT, SRV) against the target's server only. No brute force; checks that would contact other name servers are switched off. |
+| `rpc.endpoints` | MSRPC (135/593) | Anonymous endpoint-mapper listing (impacket `rpcdump`). Flags interfaces associated with authentication coercion (print spooler, EFSRPC, DFSNM, FSRVP). |
+| `elasticsearch.info` | Elasticsearch | `GET /` and `GET /_cat/indices` only: does it answer without credentials? |
 | `ssh.audit` | SSH | Banner, algorithms and host keys; algorithms ssh-audit flags as weak. |
 | `ftp.anonymous` | FTP | Banner and the standard anonymous-login check; root listing if allowed. |
 | `ldap.rootdse` | LDAP | RootDSE: naming contexts, domain, DNS host name, functional levels, DC identification. |
 | `ldap.anonymous` | LDAP | Anonymous read of the default naming context: a bounded query (size limit 100) planned from RootDSE. |
 | `nfs.showmount` | NFS | Exports and allowed clients. Nothing is mounted. |
 | `snmp.walk` | SNMP | System MIB, **only with community strings you configure** (never guessed; masked in stored records). |
-| `nse.service_info` | MSSQL, MySQL, RDP, SMTP, NFS, SMB, FTP, VNC | Information-only NSE scripts per service. Script names that suggest brute force, DoS, exploitation, fuzzing or vulnerability checks are refused. |
+| `nse.service_info` | MSSQL, MySQL, RDP, SMTP, NFS, SMB, FTP, VNC, Redis, MongoDB, Memcached, rsync, Docker API | Information-only NSE scripts per service. Script names that suggest brute force, DoS, exploitation, fuzzing or vulnerability checks are refused. |
 | `rservices.exposure` | rexec/rlogin/rsh | Passive: records the exposure for manual review. No login attempts. |
 
 `observations TARGET` lists everything recorded, for example null sessions, signing not required, readable shares, allowed zone transfers, anonymous LDAP read, world-mountable NFS exports, weak SSH algorithms and anonymous FTP. These are unverified observations; the assessment stage (Milestone 7) turns them into findings with severity and confidence. Module options are documented in [config/modules.yaml](config/modules.yaml).
@@ -501,7 +525,7 @@ A test suite kills a real Aiszx process mid-scan to check this.
 - The tool registry is `config/tools.yaml` (overridable like every other config file), with code in `aiszx/tools/`.
 - `tools nmap-caps` is an extra command for the one-time nmap capability setup.
 - `run TARGET -m MODULE` is the generic way to run modules. `recon`, `enumerate` and `full` are shortcuts over it.
-- `services TARGET`, `web TARGET`, `observations TARGET`, `findings …` and `discover CIDR` are additional commands.
+- `services TARGET`, `web TARGET`, `observations TARGET`, `findings …`, `hints …` and `discover CIDR` are additional commands.
 - `full` runs recon, enumeration and assessment in sequence. `report` is separate, so you choose when to write one.
 - `history TARGET` lists all runs (scans, assessments, reports). `compare TARGET` shows what changed.
 - `compare --from RUN --to RUN` complements the spec's `compare --latest`.
@@ -556,7 +580,7 @@ docs/DEPLOYMENT.md    fresh-install checklist, upgrade, backup/restore, offline 
 | 7 | Assessment: findings, correlation, confidence, investigation paths | **done** |
 | 8 | Reporting and history: Markdown/HTML/JSON, run comparison | **done** |
 | 9 | Hardening and deployment | **done** |
-| 10 | Coverage expansion: hostname hints and vhost discovery, AD without credentials, more services (plan: [ARCHITECTURE §20](docs/ARCHITECTURE.md#20-milestone-10-plan-coverage-expansion-proposed-2026-11-27-questions-answered-2026-11-28-awaiting-go)) | proposed |
+| 10 | Coverage expansion: host-name hints and accepted vhosts, vhost discovery, AD without credentials, MSRPC, more services ([ARCHITECTURE §20–21](docs/ARCHITECTURE.md#21-milestone-10-implementation-notes)) | **done** |
 
 ## Upgrading an existing installation
 
@@ -570,7 +594,10 @@ Run `python3 pentest.py backup`, then `git pull`, `bash install.sh` (reuses `.ve
 - **Redaction is pattern-based.** It is deliberately broad but cannot recognise every secret format. Review reports before sharing them outside the engagement, and treat raw evidence as sensitive.
 - **Reports cover one target.** An engagement-wide report across several targets is not implemented.
 - **No PDF output.** Print the HTML report to PDF from a browser; the stylesheet has print rules.
-- **No authenticated enumeration.** SNMP needs community strings you configure.
+- **No authenticated enumeration.** SNMP needs community strings you configure. Using credentials you supply is planned as a separate milestone with its own safety design.
+- **No user enumeration and no guessing** of any kind except host names under accepted domains (no Kerberos/RID user enumeration, no SNMP community or DNS subdomain brute force).
+- **Virtual-host discovery** is bounded by its wordlist; ffuf's auto-calibration and the catch-all filter can hide a real site that answers exactly like the default page.
+- **dnsrecon** needs version 1.0 or newer (for `--disable_check_recursion` / `--disable_check_bindversion`); older versions fail the unit with a clear message.
 - **Screenshots** need EyeWitness's headless browser to work; `--vhost` names can't be screenshotted.
 - **Restore is manual** (documented). `backup` covers the whole data directory, not single engagements.
 - POSIX permission checks are skipped when running on Windows (development only).

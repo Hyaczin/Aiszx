@@ -140,7 +140,7 @@ def web_calls(tmp_path, tool):
 
 
 def http_modules():
-    return [mid for mid in discover().modules if mid.startswith("http.")]
+    return [mid for mid in discover().modules if mid.startswith("http.") and mid != "http.vhost_discovery"]  # M10: own tests
 
 
 def test_full_runs_recon_then_web_enumeration(app, tmp_path):

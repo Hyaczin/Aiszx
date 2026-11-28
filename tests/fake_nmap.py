@@ -5,6 +5,7 @@ Environment:
   FAKE_NMAP_HANG   for TCP port scans: write truncated XML + grepable output, then sleep (to be interrupted)
   FAKE_NMAP_FAIL   exit with this code after printing an error
   FAKE_NMAP_PIDFILE  with FAKE_NMAP_HANG: write this process's pid here before sleeping
+  FAKE_NMAP_WIDE / FAKE_NMAP_M10  other service mixes (Milestones 6 and 10)
 """
 
 import os
@@ -39,6 +40,7 @@ def main() -> int:
     target = argv[-1]
     args = " ".join(argv)
     wide = os.environ.get("FAKE_NMAP_WIDE")
+    m10 = os.environ.get("FAKE_NMAP_M10")  # Milestone 10 service mix
     if "--script" in argv:
         port = argv[argv.index("-p") + 1]
         scripts = "".join(f'<script id="{s}" output="info from {s}"/>' for s in argv[argv.index("--script") + 1].split(","))
@@ -51,9 +53,9 @@ def main() -> int:
     elif "-sU" in argv:
         xml = S.UDP
     elif "-sV" in argv:
-        xml = S.SERVICES_WIDE if wide else S.SERVICES
+        xml = S.SERVICES_M10 if m10 else S.SERVICES_WIDE if wide else S.SERVICES
     else:
-        xml = S.TCP_WIDE if wide else S.TCP
+        xml = S.TCP_M10 if m10 else S.TCP_WIDE if wide else S.TCP
         if os.environ.get("FAKE_NMAP_HANG"):
             Path(base + ".xml").write_text(S.TRUNCATED.format(addr=target, args=args))
             Path(base + ".gnmap").write_text(S.GNMAP_TCP.format(addr=target, args=args))

@@ -356,8 +356,8 @@ def hostname_hints(k: Knowledge) -> list[FindingDraft]:
         return []
     return [FindingDraft("HTTP-008", "Untested virtual host names referenced", "info", "high", MANUAL,
                          f"Redirects or certificates reference: {', '.join(names)}.",
-                         next_steps=[f"If in scope: `scope add {n}` then `enumerate {k.target} --vhost {n}`"
-                                     for n in names[:5]],
+                         next_steps=[f"Review with `hints list {k.target}`; if in scope: `hints accept {k.target} "
+                                     f"{' '.join(names[:5])}`, then `enumerate {k.target}`"],
                          discriminator=",".join(names), evidence=k.find("http.hostname_hints"))]
 
 
@@ -406,3 +406,143 @@ def relay_context(k: Knowledge) -> list[FindingDraft]:
         impact="In Active Directory environments this combination is a common prerequisite for relay attacks.",
         next_steps=["Map other domain hosts' signing settings (`discover` + `enumerate -m smb` within scope)"],
         service_key="tcp/445", evidence=signing_off + domain[:1])]
+
+
+
+# --- Milestone 10: names, Windows/AD without credentials, data services ----------------
+
+_FAILED = re.compile(r"error|not authori[sz]ed|unauthori[sz]ed|auth(entication)? required|requires authentication|"
+                     r"NOAUTH|denied|failed|refused", re.IGNORECASE)
+
+
+def _nse(k: Knowledge, script: str) -> list[Observation]:
+    """NSE output that actually answered (not a placeholder, not an auth error)."""
+    return [o for o in k.find(f"nse.{script}") if isinstance(o.value, str) and o.value.strip()
+            and not _FAILED.search(o.value)]
+
+
+@rule("VHOST-001")
+def vhosts_found(k: Knowledge) -> list[FindingDraft]:
+    obs = k.find("http.vhost_found")
+    names = sorted({n for o in obs for n in (o.value or [])})
+    if not names:
+        return []
+    return [FindingDraft("VHOST-001", f"{len(names)} additional virtual host(s) answered", "info", "medium", MANUAL,
+                         f"Name-based virtual-host discovery found: {', '.join(names[:15])}"
+                         + (" ..." if len(names) > 15 else "") + ".",
+                         impact="Additional sites on the same server widen the web attack surface.",
+                         next_steps=[f"Review with `hints list {k.target}`; accept in-scope names with "
+                                     f"`hints accept {k.target} NAME`, then `enumerate {k.target}`"],
+                         discriminator=",".join(names), evidence=obs)]
+
+
+@rule("AD-001")
+def ad_srv(k: Knowledge) -> list[FindingDraft]:
+    out = []
+    for o in k.find("dns.ad_srv"):
+        v = o.value if isinstance(o.value, dict) else {}
+        if not v.get("services"):
+            continue
+        dcs = v.get("domain_controllers") or []
+        out.append(FindingDraft(
+            "AD-001", f"Active Directory DNS records for {v.get('domain')}", "info", "high", CONFIRMED,
+            f"The DNS server publishes AD SRV records ({', '.join(v['services'])}); domain controller(s): "
+            f"{', '.join(dcs) or 'not listed'}.",
+            next_steps=["Confirm which listed domain controllers are in scope before testing them"]
+                       + [f"`hints list {k.target}` shows the names; register in-scope DCs as targets"],
+            service_key="tcp/53", discriminator=str(v.get("domain")), evidence=[o], details=v))
+    return out
+
+
+@rule("RPC-001")
+def rpc_coercion_interfaces(k: Knowledge) -> list[FindingDraft]:
+    obs = [o for o in k.find("rpc.notable_interfaces") if o.value]
+    if not obs:
+        return []
+    names = sorted({i.get("name") for o in obs for i in o.value})
+    return [FindingDraft(
+        "RPC-001", "RPC interfaces associated with authentication coercion are exposed", "low", "medium", MANUAL,
+        f"The endpoint mapper lists: {', '.join(names)}.",
+        impact="These interfaces (e.g. the print spooler) have been abused to make a host authenticate to an "
+               "attacker-controlled system, which can be combined with relaying. Exposure alone is not a vulnerability.",
+        recommendation="Disable the print spooler where it is not needed (especially on domain controllers); apply "
+                       "current patches and EPA/SMB signing to limit relaying.",
+        next_steps=["Confirm with the system owner whether these services are required on this host"],
+        service_key=_svc_key(obs[0].url), discriminator=",".join(names), evidence=obs)]
+
+
+@rule("WINRM-001")
+def winrm_exposed(k: Knowledge) -> list[FindingDraft]:
+    return [FindingDraft(
+        "WINRM-001", f"WinRM reachable ({s.key})", "info", "high", CONFIRMED,
+        "Windows Remote Management is reachable from the tester's network position.",
+        impact="WinRM gives remote shell access to accounts that are allowed to use it; it matters once valid "
+               "credentials exist. No authentication was attempted.",
+        recommendation="Restrict WinRM to management networks and the accounts that need it.",
+        service_key=s.key, details={"service": s.to_dict()})
+        for s in k.services if s.state == "open" and "winrm" in s.categories]
+
+
+@rule("RDP-001")
+def rdp_without_nla(k: Knowledge) -> list[FindingDraft]:
+    out = []
+    for o in k.find("nse.rdp-enum-encryption"):
+        text = o.value if isinstance(o.value, str) else ""
+        if re.search(r"(Native RDP|SSL):\s*SUCCESS", text):
+            out.append(FindingDraft(
+                "RDP-001", "RDP accepts connections without Network Level Authentication", "medium", "medium", POTENTIAL,
+                "rdp-enum-encryption shows the server accepts a security layer other than CredSSP (NLA).",
+                impact="Without NLA the login screen is reached before authenticating, which exposes more code to "
+                       "unauthenticated users and leaks host information.",
+                recommendation="Require Network Level Authentication for Remote Desktop.",
+                service_key=_svc_key(o.url), evidence=[o]))
+    return out
+
+
+def _open_service(rule_id: str, title: str, severity: str, script: str, impact: str, recommendation: str,
+                  classification: str = CONFIRMED):
+    @rule(rule_id)
+    def check(k: Knowledge) -> list[FindingDraft]:
+        return [FindingDraft(rule_id, title, severity, "high" if classification == CONFIRMED else "medium",
+                             classification, f"{script} answered without credentials:\n{o.value[:400]}",
+                             impact=impact, recommendation=recommendation,
+                             next_steps=["Confirm the exposure with the system owner; do not read or change data "
+                                         "without explicit authorisation"],
+                             service_key=_svc_key(o.url), evidence=[o])
+                for o in _nse(k, script)]
+    check.__name__ = f"open_{rule_id.lower().replace('-', '_')}"
+    return check
+
+
+_open_service("REDIS-001", "Redis answers without authentication", "high", "redis-info",
+              "Anyone who can reach the port can read and modify the data store; misconfigured Redis servers are a "
+              "well-known route to code execution.",
+              "Enable authentication (requirepass / ACLs), bind to localhost or trusted networks, enable protected-mode.")
+_open_service("MONGO-001", "MongoDB lists databases without authentication", "high", "mongodb-databases",
+              "Database contents may be readable and writable without credentials.",
+              "Enable authorization (security.authorization: enabled) and restrict network access.")
+_open_service("MEMCACHED-001", "Memcached reachable without authentication", "medium", "memcached-info",
+              "Cached data (often sessions or tokens) may be readable; exposed memcached is also used for traffic "
+              "amplification.",
+              "Bind memcached to localhost or a private interface; enable SASL where supported.")
+_open_service("RSYNC-001", "rsync modules listed anonymously", "medium", "rsync-list-modules",
+              "Listed modules may allow anonymous file download or upload, depending on their configuration.",
+              "Require authentication for rsync modules (auth users / secrets file) and restrict hosts allow.",
+              classification=MANUAL)
+_open_service("DOCKER-001", "Docker Engine API reachable without authentication", "critical", "docker-version",
+              "Control of the Docker API is equivalent to root on the host (containers can mount the host "
+              "filesystem).",
+              "Never expose the Docker API without TLS client authentication; bind it to a local socket.")
+
+
+@rule("ES-001")
+def elasticsearch_open(k: Knowledge) -> list[FindingDraft]:
+    return [FindingDraft(
+        "ES-001", "Elasticsearch answers without authentication", "high", "high", CONFIRMED,
+        f"Cluster {(o.value or {}).get('cluster_name')!r} (version {(o.value or {}).get('version') or '?'}) answered "
+        f"GET / and listed {(o.value or {}).get('indices', 0)} index(es) without credentials.",
+        impact="Index contents may be readable and writable by anyone who can reach the port.",
+        recommendation="Enable Elasticsearch security (authentication and TLS) and restrict network access.",
+        next_steps=["Confirm the exposure with the system owner; do not read documents without explicit authorisation"],
+        service_key=_svc_key(o.url), evidence=[o], details=o.value if isinstance(o.value, dict) else {})
+        for o in k.find("elasticsearch.unauthenticated")]

@@ -309,7 +309,60 @@ class TargetManager:
                 results.append((target, decision))
         return results
 
+    # -- accepted virtual hosts (Milestone 10) ----------------------------------
+    def vhosts(self, target: Target) -> list[dict[str, Any]]:
+        rows = self.db.query("SELECT name, source, accepted_at, accepted_by FROM target_vhosts WHERE target_id = ?"
+                             " ORDER BY name", (target.id,))
+        return [dict(r) for r in rows]
+
+    def vhost_names(self, target: Target) -> list[str]:
+        return [v["name"] for v in self.vhosts(target)]
+
+    def vhost_decision(self, target: Target, name: str) -> ScopeDecision:
+        """Scope decision for presenting ``name`` to the target's current addresses (names are never resolved:
+        connections go to the target's pinned address, the name is only sent as Host header / SNI)."""
+        identity = normalise_target(name)
+        if identity.kind != KIND_HOSTNAME:
+            raise ValidationError(f"{name!r} is not a host name")
+        return self.scope.policy(target.engagement).evaluate(identity, target.current_addresses)
+
+    def accept_vhosts(self, target: Target, names: dict[str, str]) -> list[str]:
+        """Store ``{name: source}``; every name must be in scope. Returns the names that were new."""
+        added = []
+        now = iso()
+        with self.db.transaction():
+            for name, source in names.items():
+                decision = self.vhost_decision(target, name)
+                if not decision.in_scope:
+                    raise ScopeError(f"{name} is out of scope: " + "; ".join(decision.reasons))
+                cur = self.db.execute(
+                    "INSERT INTO target_vhosts (id, target_id, name, source, accepted_at, accepted_by)"
+                    " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (target_id, name) DO NOTHING",
+                    (new_id(), target.id, name, source, now, self.actor))
+                if cur.rowcount:
+                    added.append(name)
+            if added:
+                record_event(self.db, "target.vhost_accept", actor=self.actor, engagement_id=target.engagement.id,
+                             target_id=target.id, canonical=target.canonical, vhosts=added)
+        self.write_mirror(target)
+        return added
+
+    def remove_vhosts(self, target: Target, names: list[str]) -> list[str]:
+        removed = []
+        with self.db.transaction():
+            for name in names:
+                cur = self.db.execute("DELETE FROM target_vhosts WHERE target_id = ? AND name = ?", (target.id, name))
+                if cur.rowcount:
+                    removed.append(name)
+            if removed:
+                record_event(self.db, "target.vhost_remove", actor=self.actor, engagement_id=target.engagement.id,
+                             target_id=target.id, canonical=target.canonical, vhosts=removed)
+        self.write_mirror(target)
+        return removed
+
     def write_mirror(self, target: Target) -> None:
         path = self.layout.target_dir(target.engagement.slug, target.slug) / "target.yaml"
         if path.parent.is_dir():
-            write_yaml(path, target.to_dict(), MIRROR_HEADER)
+            data = target.to_dict()
+            data["vhosts"] = self.vhost_names(target)
+            write_yaml(path, data, MIRROR_HEADER)

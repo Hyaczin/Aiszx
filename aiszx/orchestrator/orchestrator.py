@@ -179,6 +179,8 @@ class Orchestrator:
         messages = self.reconcile()
         eng, target = self._load(engagement_slug, target_raw)
         address, decision, target = self._preflight(eng, target)
+        run_params = dict(run_params or {})
+        messages += self._merge_accepted_vhosts(target, run_params)
         settings = self.settings_for(eng)
         prof = settings.profile(profile or self.cfg.default_profile)
         modules = self.registry.select(tokens)
@@ -206,6 +208,22 @@ class Orchestrator:
         report = self._run(state, modules)
         report.messages = messages + report.messages
         return report
+
+    def _merge_accepted_vhosts(self, target: Target, run_params: dict[str, Any]) -> list[str]:
+        """Add the target's accepted virtual hosts (`hints accept`) to this run, re-checking scope now."""
+        mgr = self.app.targets()
+        usable, messages = [], []
+        for name in mgr.vhost_names(target):
+            decision = mgr.vhost_decision(target, name)
+            if decision.in_scope:
+                usable.append(name)
+            else:
+                messages.append(f"accepted virtual host {name} not used: no longer in scope ({'; '.join(decision.reasons)})")
+        given = list(run_params.get("vhosts", []))
+        run_params["vhosts"] = given + [n for n in usable if n not in given]
+        if usable:
+            messages.append(f"accepted virtual host(s) included: {', '.join(usable)}")
+        return messages
 
     def resume(self, engagement_slug: str, target_raw: str, *, run_id: str | None = None) -> RunReport:
         messages = self.reconcile()

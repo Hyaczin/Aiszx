@@ -36,6 +36,11 @@ DEFAULT_SCRIPTS = {
     "ftp": ["ftp-anon", "ftp-syst"],
     "vnc": ["vnc-info"],
     "postgresql": [],
+    "redis": ["redis-info"],
+    "mongodb": ["mongodb-info", "mongodb-databases"],
+    "memcached": ["memcached-info"],
+    "rsync": ["rsync-list-modules"],
+    "docker": ["docker-version"],
 }
 FORBIDDEN = re.compile(r"brute|dos|exploit|fuzz|flood|vuln|-enum-users|backdoor", re.IGNORECASE)
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -54,12 +59,14 @@ class ServiceInfo(Module):
     meta = ModuleMeta(
         id="nse.service_info",
         version="1",
-        description="Information-only NSE scripts per service (MSSQL, MySQL, RDP, SMTP, NFS, SMB, FTP, VNC)",
+        description="Information-only NSE scripts per service (MSSQL, MySQL, RDP, SMTP, NFS, SMB, FTP, VNC, Redis, "
+                    "MongoDB, Memcached, rsync, Docker API)",
         stage=Stage.ENUMERATION,
         safety=Safety.ACTIVE_SAFE,
         timeout_seconds=300,
         tools=(ToolRequirement("nmap", min_version="7.80"),),
-        categories=("other", "mssql", "mysql", "rdp", "smtp", "nfs", "smb", "ftp", "vnc", "postgresql"),
+        categories=("other", "mssql", "mysql", "rdp", "smtp", "nfs", "smb", "ftp", "vnc", "postgresql", "redis", "mongodb",
+                    "memcached", "rsync", "docker"),
         retry=RetryPolicy(max_attempts=2, backoff_seconds=5),
         max_parallel=2,
         config_defaults={"scripts": DEFAULT_SCRIPTS},

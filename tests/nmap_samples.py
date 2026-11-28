@@ -91,3 +91,30 @@ NSE = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><addr
 <ports><port protocol="tcp" portid="{port}"><state state="open" reason="syn-ack"/><service name="x" method="table" conf="3"/>
 {scripts}</port></ports></host>
 """ + FINISHED
+
+
+# A Windows/AD host with Milestone 10 services (FAKE_NMAP_M10)
+M10_PORTS = (53, 80, 135, 389, 445, 873, 2375, 3389, 5985, 6379, 9200, 11211, 27017)
+TCP_M10 = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="{addr}" addrtype="ipv4"/><hostnames/>
+<ports>""" + "".join(
+    f'<port protocol="tcp" portid="{p}"><state state="open" reason="syn-ack" reason_ttl="127"/></port>'
+    for p in M10_PORTS) + """</ports></host>
+""" + FINISHED
+
+SERVICES_M10 = HEAD + """<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="{addr}" addrtype="ipv4"/><hostnames/>
+<ports>
+<port protocol="tcp" portid="53"><state state="open" reason="syn-ack"/><service name="domain" product="Simple DNS Plus" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack"/><service name="http" product="Microsoft IIS httpd" version="10.0" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="135"><state state="open" reason="syn-ack"/><service name="msrpc" product="Microsoft Windows RPC" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="389"><state state="open" reason="syn-ack"/><service name="ldap" product="Microsoft Windows Active Directory LDAP" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="445"><state state="open" reason="syn-ack"/><service name="microsoft-ds" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="873"><state state="open" reason="syn-ack"/><service name="rsync" product="rsync" version="protocol version 31" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="2375"><state state="open" reason="syn-ack"/><service name="docker" product="Docker" version="24.0.7" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="3389"><state state="open" reason="syn-ack"/><service name="ms-wbt-server" product="Microsoft Terminal Services" method="probed" conf="10"/><script id="rdp-ntlm-info" output="&#xa;  Target_Name: CORP&#xa;  NetBIOS_Computer_Name: DC01&#xa;  DNS_Domain_Name: corp.local&#xa;  DNS_Computer_Name: dc01.corp.local&#xa;  DNS_Tree_Name: corp.local&#xa;"/><script id="ssl-cert" output="Subject: commonName=dc01.corp.local&#xa;Not valid after:  2027-05-01T00:00:00"/></port>
+<port protocol="tcp" portid="5985"><state state="open" reason="syn-ack"/><service name="http" product="Microsoft HTTPAPI httpd" version="2.0" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="6379"><state state="open" reason="syn-ack"/><service name="redis" product="Redis key-value store" version="7.0.11" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="9200"><state state="open" reason="syn-ack"/><service name="http" product="Elasticsearch REST API" version="7.17.9" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="11211"><state state="open" reason="syn-ack"/><service name="memcache" product="Memcached" version="1.6.21" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="27017"><state state="open" reason="syn-ack"/><service name="mongodb" product="MongoDB" version="6.0.5" method="probed" conf="10"/></port>
+</ports></host>
+""" + FINISHED

@@ -55,3 +55,15 @@ modules:
   #     snmp.walk:
   #       options:
   #         communities: ["the-string-you-were-given"]
+
+  # --- Coverage expansion (Milestone 10) -----------------------------------------
+  # Still no credential use, no user enumeration, no brute force of anything but host names.
+  #
+  # http.vhost_discovery: wordlists (first existing is used), threads (20), max_time (s, 300), rate (req/s, 0 = no
+  #                       limit, ffuf only), max_domains (3), tool (auto|ffuf|gobuster). Base domains are the target
+  #                       hostname, accepted virtual hosts (`hints accept`) and --vhost names. active_noisy.
+  # dns.ad_srv:           domains, max_domains (2). SRV lookups for DCs, Kerberos and the global catalog.
+  # dns.dnsrecon:         domains, max_domains (2), lifetime (s). Standard records only (-t std), DNS on port 53.
+  # rpc.endpoints:        anonymous endpoint-mapper listing on 135/593 (impacket rpcdump).
+  # elasticsearch.info:   timeout (s). GET / and /_cat/indices only.
+  # nse.service_info also covers redis, mongodb, memcached, rsync and docker (information scripts).

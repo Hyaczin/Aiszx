@@ -47,7 +47,8 @@ def register(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -
         "enumerate", parents=[common], help="enumerate the target's known services (run `recon` first)",
         description="Plans enumeration modules from the services found by the latest reconnaissance and runs them "
                     "in a new run. --module restricts to a family (e.g. http) or module id. Virtual hosts given "
-                    "with --vhost are sent as Host header/SNI to the target's in-scope address.",
+                    "with --vhost, and those accepted with `hints accept`, are sent as Host header/SNI to the "
+                    "target's in-scope address.",
     )
     e.add_argument("target")
     e.add_argument("-m", "--module", dest="modules", action="append", default=[], metavar="MODULE",
@@ -125,6 +126,7 @@ def cmd_web(ctx: AppContext, args: argparse.Namespace) -> int:
     print(table([(e["url"], e["status_code"] or "-", (e["title"] or "-")[:40], (e["server"] or "-")[:30],
                   _clip(", ".join(techs.get(e["url"], [])), 60) or "-") for e in web["endpoints"]],
                 ("URL", "STATUS", "TITLE", "SERVER", "TECHNOLOGIES")))
+    prefix = "python3 pentest.py" + ("" if eng.slug == ctx.config.default_engagement else f" -e {eng.slug}")
     if web["resources"]:
         print("\nPaths:")
         print(table([(r["url"], r["status_code"] or "-", r["content_length"] or "-", r["redirect"] or "",
@@ -133,12 +135,12 @@ def cmd_web(ctx: AppContext, args: argparse.Namespace) -> int:
         if len(web["resources"]) > 80:
             print(f"  ... {len(web['resources']) - 80} more (use --json)")
     if observations:
-        print("\nObservations (for manual review; assessed in Milestone 7):")
+        print("\nObservations (assessed by `assess`):")
         for o in observations[:30]:
             print(f"  {o['key']}: {json.dumps(o['value'])[:120]} ({o.get('url', '')})")
     if hints:
         print(f"\nHost name hints (not tested yet): {', '.join(sorted(hints))}")
-        print(f"  add to scope (`scope add <name>`), then `enumerate {target.canonical} --vhost <name>`")
+        print(f"  review and accept: {prefix} hints list {target.canonical}")
     shot = units.get("http.screenshots")
     if shot and shot["output_dir"]:
         report = (ctx.config.data_dir / ExecutionStore(ctx.db).execution(eid)["workspace_path"] / shot["output_dir"]

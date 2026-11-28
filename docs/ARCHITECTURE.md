@@ -1,6 +1,6 @@
 # Aiszx — Architecture Review & Design
 
-**Status:** Approved 2026-11-25. All milestones implemented (version 1.0.0). Implementation notes are in §13 to §19. Milestone 10 (coverage expansion) is proposed in §20.
+**Status:** Approved 2026-11-25. Milestones 1–10 implemented (version 1.1.0). Implementation notes are in §13 to §19 and §21; the Milestone 10 plan is §20.
 **Date:** 2026-11-25
 **Scope of this document:** Section 21 of the project specification — architecture review, improvements, final layout, schema, module interface, orchestration, recovery, tool detection, challenges and phased plan.
 
@@ -948,7 +948,7 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 | **7** | **Assessment** | Rule engine over observations, rule library (SMB signing, anonymous FTP/LDAP/SMB, exposed DB, directory listing, outdated-version hypotheses via offline searchsploit), confidence/severity scoring, fingerprints, attack-surface prioritisation, `assess` command. | rule unit tests, classification correctness (port ≠ vuln), fingerprint stability. |
 | **8** | **Reporting & history** | Report data model, Markdown/HTML/JSON renderers (all 15 sections), redaction, evidence index, `history`, `compare --latest`, consolidated target view. | snapshot tests of reports, HTML escaping of hostile banners, diff correctness (new/closed ports, changed versions, new/irreproducible findings). |
 | **9** | **Hardening & deployment** | `install.sh` (venv, deps, init, tool check, no silent installs), integration tests with local services (python http.server, a local SSH/FTP/SMB where available), recovery chaos tests (kill -9 mid-run), docs, fresh Parrot validation checklist. | integration suite, kill/resume tests, installer dry-run. |
-| **10** | **Coverage expansion (planned)** | Hostname-hint pipeline (`hints`, `hints accept`), `http.vhost_discovery` (ffuf/gobuster vhost, `active_noisy`), `dns.ad_srv`, `rpc.endpoints` (impacket rpcdump), `dns.dnsrecon` (standard records only), information-only NSE for Redis, MongoDB, Memcached, Elasticsearch, rsync, Docker API, WinRM; new categories + rules; integration test against a local name-based vhost server. See §20. | hint collection and dedup, vhost baseline/wildcard filtering, scope gate on accept, parser fixtures per tool, rule tests, NSE deny-list still enforced. |
+| **10** | **Coverage expansion** | Hostname-hint pipeline (`hints`, `hints accept`), `http.vhost_discovery` (ffuf/gobuster vhost, `active_noisy`), `dns.ad_srv`, `rpc.endpoints` (impacket rpcdump), `dns.dnsrecon` (standard records only), information-only NSE for Redis, MongoDB, Memcached, Elasticsearch, rsync, Docker API, WinRM; new categories + rules; integration test against a local name-based vhost server. See §20. | hint collection and dedup, vhost baseline/wildcard filtering, scope gate on accept, parser fixtures per tool, rule tests, NSE deny-list still enforced. |
 
 `full TARGET --profile X` is available from Milestone 4 (recon only) and grows as each stage lands.
 
@@ -1071,7 +1071,7 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 
 ---
 
-## 20. Milestone 10 plan: coverage expansion (proposed 2026-11-27, questions answered 2026-11-28, awaiting "go")
+## 20. Milestone 10 plan: coverage expansion (proposed 2026-11-27, implemented 2026-11-28)
 
 **Goal.** Close the gaps an HTB-style workflow hits most often after a `full` run, without weakening any safety rule. Everything stays enumeration: no credential guessing, no exploitation, no user enumeration.
 
@@ -1101,3 +1101,17 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 3. **`dns.dnsrecon` is included** (standard mode only, as in package E).
 
 Real use should drive the final list: findings from your next few boxes (commands you had to run by hand) can replace or reorder packages before work starts.
+
+---
+
+## 21. Milestone 10 implementation notes
+
+- **Accepted virtual hosts** are stored per target in `target_vhosts` (migration `0007`, schema v7) and mirrored into `target.yaml`. `hints accept` evaluates each name with `ScopePolicy.evaluate(hostname, target.current_addresses)`, so a name counts as presented to the target's address (it is never resolved) and exclusions win. `Orchestrator.start` merges the accepted names into `run_params["vhosts"]` after re-checking scope, so they are recorded in the run snapshot (and `resume` presents the same names), pinned in the scope guard like `--vhost`, and used by every module that already honoured `--vhost` (http.*, dns.dig and the new DNS modules).
+- **Hints** (`aiszx.assessment.hints`) are computed on demand from `knowledge.gather` (latest completed result per unit across runs, plus the services' nmap script output). No table: they always reflect the current evidence. Single-label names, wildcards and IP literals are dropped.
+- **`http.vhost_discovery`** plans one unit per web service × base domain. Base domains are only scope-checked names (target hostname, accepted vhosts, `--vhost`), and each command lists the base as a target so the scope guard checks it. The connection always goes to the pinned address; only the `Host` header varies. ffuf runs with `-ac`; for both tools any (status, size) pair returned for at least max(3, 10 %) of the matches is discarded as a catch-all. Results are observations (`http.vhost_found`) and hints, never automatic endpoints.
+- **`dns.ad_srv`** reuses `dns.dig.candidate_domains` (options, LDAP/SMB domains from the same run, target hostname, accepted names). **`dns.dnsrecon`** runs `-t std -n <target>` with `--disable_check_recursion --disable_check_bindversion`, because those checks contact every listed name server directly, which may be outside scope.
+- **`rpc.endpoints`** uses a separate registry entry `impacket-rpcdump` (the generic `impacket` entry resolves to a different script). No username is passed, so rpcdump neither authenticates nor prompts.
+- **New service categories:** redis, mongodb, memcached, elasticsearch (by product; it stays `http` too), rsync, docker. `nse.service_info` gained information scripts for them; the NSE deny pattern is unchanged.
+- **New rules:** VHOST-001, AD-001, RPC-001, WINRM-001, RDP-001 (non-NLA security layer accepted), REDIS-001, MONGO-001, MEMCACHED-001, RSYNC-001, DOCKER-001, ES-001. The NSE-based ones ignore output that reports an authentication or execution error. HTTP-008's next step now points to `hints accept`.
+- **Deviations from §20:** the command is `hints list|accept|remove TARGET` (subcommands) rather than `hints TARGET`, to keep argparse unambiguous. WinRM needed no module: its exposure is a rule over the service list. Elasticsearch got a small curl module instead of extending http.probe, so the probe's per-endpoint behaviour is unchanged.
+- **Tests:** `tests/unit/test_coverage_m10.py` (parsers, hints, classifier, rules, accepted-vhost scope handling, an end-to-end run against a fake AD host with all new modules, CLI). The integration suite gained a vhost test: the local server answers `dev.itest.local` differently, and the test checks discovery, the catch-all filter, the scope refusal and probing the accepted name. It is skipped without ffuf or gobuster.
