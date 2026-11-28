@@ -1071,7 +1071,7 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 
 ---
 
-## 20. Milestone 10 plan: coverage expansion (proposed 2026-11-27, awaiting "go")
+## 20. Milestone 10 plan: coverage expansion (proposed 2026-11-27, questions answered 2026-11-28, awaiting "go")
 
 **Goal.** Close the gaps an HTB-style workflow hits most often after a `full` run, without weakening any safety rule. Everything stays enumeration: no credential guessing, no exploitation, no user enumeration.
 
@@ -1094,10 +1094,10 @@ Each milestone ends with: working code, tests passing on Windows and Linux (unit
 - **onesixtyone / SNMP community guessing.** That is credential guessing; SNMP keeps using only community strings you configure.
 - **Engagement-wide (multi-target) reports** and PDF output: candidates for a later milestone.
 
-### 20.3 Open questions before "go"
+### 20.3 Decisions (answered 2026-11-28)
 
-1. Is ffuf acceptable as a new optional tool (APT package `ffuf` on Parrot)? gobuster `vhost` is the fallback either way.
-2. Should accepted vhosts be stored per target (proposed) or per engagement?
-3. Should `dns.dnsrecon` be included, or is `dig` enough for you?
+1. **ffuf** is accepted as a new optional tool (APT package `ffuf`), registered in `config/tools.yaml`; gobuster `vhost` remains the fallback.
+2. **Accepted vhosts are stored per target** (with the target record, so every later `full` / `enumerate` run of that target includes them).
+3. **`dns.dnsrecon` is included** (standard mode only, as in package E).
 
 Real use should drive the final list: findings from your next few boxes (commands you had to run by hand) can replace or reorder packages before work starts.
